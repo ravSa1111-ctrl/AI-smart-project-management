@@ -678,6 +678,17 @@ export interface TicketReferenceImage {
   previewUrl: string // base64 or local URL
 }
 
+export interface TicketActivity {
+  id: string
+  timestamp: string
+  type: 'status-change' | 'assignment-change' | 'requirement-impact'
+  action: string // e.g., "Status changed", "Assigned to", "Impacted by requirement change"
+  details: string // Detailed description
+  changedBy: string // e.g., "Manager", "System"
+  oldValue?: string // Previous value (for status/assignment changes)
+  newValue?: string // New value (for status/assignment changes)
+}
+
 export interface Ticket {
   day: number
   date: string
@@ -691,13 +702,14 @@ export interface Ticket {
   referenceImages?: TicketReferenceImage[] // Array of reference images
   metadata?: string[] // Optional metadata notes (e.g., "Visual references provided by manager")
   assignee?: string // Legacy field - use assignedTo instead
-  status: 'planned' | 'in-progress' | 'completed'
+  status: 'planned' | 'in-progress' | 'testing' | 'completed' | 'on-hold' | 'rework'
   assignedTo?: {
     role: string
     name: string
   }
   lastUpdated?: string // ISO timestamp
   comments?: string[] // Optional array of comments
+  activityLog?: TicketActivity[] // Activity history
 }
 
 export interface GenerateExecutionPlanRequest {
@@ -1065,6 +1077,17 @@ function generateTicketsForFeature(
       uiReference: ticketDef.uiReference,
       status: 'planned',
       lastUpdated: now.toISOString(),
+      activityLog: [
+        {
+          id: `activity-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+          timestamp: now.toISOString(),
+          type: 'status-change',
+          action: 'Ticket created',
+          details: `Ticket "${ticketDef.title}" was created with status "planned"`,
+          changedBy: 'System',
+          newValue: 'planned',
+        },
+      ],
       // assignedTo and comments are optional and can be set later
     })
     

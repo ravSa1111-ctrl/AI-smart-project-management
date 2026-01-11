@@ -3,19 +3,153 @@
 @tailwind utilities;
 
 :root {
-  --background: #f5f5f5;
-  --foreground: #1a1a1a;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #1a1a1a;
-    --foreground: #e5e5e5;
-  }
+  --background: #f8fafc;
+  --foreground: #1e293b;
+  /* AI Color System */
+  --ai-primary: #4f46e5; /* Deep Indigo */
+  --ai-primary-light: #6366f1; /* Electric Blue */
+  --ai-secondary: #14b8a6; /* Teal */
+  --ai-secondary-light: #06b6d4; /* Cyan */
+  --ai-accent: #8b5cf6; /* Violet */
+  --ai-accent-light: #a78bfa; /* Gradient Purple */
+  --ai-success: #10b981; /* Soft Green */
+  --ai-warning: #f59e0b; /* Amber */
+  --ai-error: #ef4444; /* Muted Red */
 }
 
 body {
   color: var(--foreground);
   background: var(--background);
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+/* AI-Driven Design System */
+@layer components {
+  /* Cards */
+  .card {
+    @apply bg-white border border-gray-200 rounded-lg shadow-sm;
+  }
+  
+  .card-hover {
+    @apply transition-all duration-200 hover:shadow-md hover:border-gray-300;
+  }
+  
+  .card-ai {
+    @apply bg-gradient-to-br from-indigo-50/50 to-purple-50/50 border border-indigo-200/50 rounded-lg shadow-sm;
+  }
+  
+  /* AI Gradients */
+  .gradient-ai-primary {
+    background: linear-gradient(135deg, #4f46e5 0%, #6366f1 100%);
+  }
+  
+  .gradient-ai-secondary {
+    background: linear-gradient(135deg, #14b8a6 0%, #06b6d4 100%);
+  }
+  
+  .gradient-ai-accent {
+    background: linear-gradient(135deg, #8b5cf6 0%, #a78bfa 100%);
+  }
+  
+  .gradient-border-ai {
+    @apply border-2;
+    border-image: linear-gradient(135deg, #4f46e5, #8b5cf6) 1;
+  }
+  
+  /* Badges */
+  .badge {
+    @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium;
+  }
+  
+  .badge-ai {
+    @apply bg-gradient-to-r from-indigo-500 to-purple-500 text-white;
+  }
+  
+  /* Ticket Status Colors */
+  .badge-planned {
+    @apply bg-gray-100 text-gray-800;
+  }
+  
+  .badge-assigned {
+    @apply bg-blue-100 text-blue-800;
+  }
+  
+  .badge-in-progress {
+    @apply bg-indigo-100 text-indigo-800;
+  }
+  
+  .badge-code-review {
+    @apply bg-violet-100 text-violet-800;
+  }
+  
+  .badge-testing {
+    @apply bg-teal-100 text-teal-800;
+  }
+  
+  .badge-blocked {
+    @apply bg-red-100 text-red-800;
+  }
+  
+  .badge-on-hold {
+    @apply bg-amber-100 text-amber-800;
+  }
+  
+  .badge-completed {
+    @apply bg-green-100 text-green-800;
+  }
+  
+  .badge-rework {
+    @apply bg-orange-100 text-orange-800;
+  }
+  
+  /* AI Buttons */
+  .btn-ai {
+    @apply px-5 py-2.5 rounded-md text-sm font-medium text-white transition-all duration-200;
+    background: linear-gradient(135deg, #4f46e5 0%, #6366f1 100%);
+  }
+  
+  .btn-ai:hover {
+    background: linear-gradient(135deg, #4338ca 0%, #4f46e5 100%);
+    @apply shadow-lg;
+  }
+  
+  .btn-ai-secondary {
+    @apply px-5 py-2.5 rounded-md text-sm font-medium text-white transition-all duration-200;
+    background: linear-gradient(135deg, #14b8a6 0%, #06b6d4 100%);
+  }
+  
+  .btn-ai-secondary:hover {
+    background: linear-gradient(135deg, #0d9488 0%, #0891b2 100%);
+    @apply shadow-lg;
+  }
+  
+  /* AI Container */
+  .ai-container {
+    @apply bg-gradient-to-br from-indigo-50/30 via-purple-50/30 to-cyan-50/30 border border-indigo-200/40 rounded-lg p-6;
+  }
+  
+  .ai-border {
+    @apply border-l-4;
+    border-left-color: #6366f1;
+  }
+  
+  /* Loading States */
+  .ai-loading {
+    @apply inline-block animate-pulse;
+  }
+  
+  .ai-spinner {
+    @apply inline-block animate-spin rounded-full border-2 border-indigo-500 border-t-transparent;
+  }
+  
+  /* Glow Effects */
+  .glow-ai {
+    box-shadow: 0 0 20px rgba(99, 102, 241, 0.3);
+  }
+  
+  .glow-ai-hover:hover {
+    box-shadow: 0 0 25px rgba(99, 102, 241, 0.4);
+  }
 }

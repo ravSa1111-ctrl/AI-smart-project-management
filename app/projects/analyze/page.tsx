@@ -3,9 +3,9 @@
 import { useState, useEffect } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
-import { analyzeProject, reviseProjectPlan, generateExecutionPlan, extendExecutionPlan, generateRevisionChangeLog, analyzeRequirementImpact, updateExecutionPlanForRequirements } from '@/lib/services/aiDeliveryManager'
+import { analyzeProject, reviseProjectPlan, generateExecutionPlan, extendExecutionPlan, generateRevisionChangeLog, analyzeRequirementImpact } from '@/lib/services/aiDeliveryManager'
 import type { Project, ProjectAnalysis, Phase, CostBreakdown, TeamMember, Risk } from '@/lib/data/mockStorage'
-import type { ExecutionPlan, TicketReferenceImage, RequirementImpactAnalysis } from '@/lib/services/aiDeliveryManager'
+import type { ExecutionPlan, TicketReferenceImage, RequirementImpactAnalysis, TicketActivity } from '@/lib/services/aiDeliveryManager'
 
 export default function AnalyzeProjectPage() {
   const router = useRouter()
@@ -65,7 +65,7 @@ export default function AnalyzeProjectPage() {
     acceptanceCriteria: string[]
     uiReference: string
     referenceImages: TicketReferenceImage[]
-    status: 'planned' | 'in-progress' | 'completed'
+    status: 'planned' | 'in-progress' | 'testing' | 'completed' | 'on-hold' | 'rework'
     assignedTo: {
       role: string
       name: string
@@ -543,6 +543,220 @@ export default function AnalyzeProjectPage() {
     setEditTicketData(null)
   }
 
+  // Ticket action handlers
+  const handleTicketAction = (
+    phaseIndex: number,
+    sprintIndex: number,
+    featureIndex: number,
+    ticketIndex: number,
+    action: 'assign' | 'mark-in-progress' | 'send-to-testing' | 'mark-completed' | 'put-on-hold' | 'send-back-rework',
+    assigneeRole?: string,
+    assigneeName?: string
+  ) => {
+    if (!executionPlan) return
+
+    const updatedPlan = { ...executionPlan }
+    const ticket = updatedPlan.phases[phaseIndex].sprints[sprintIndex].features[featureIndex].tickets[ticketIndex]
+    const phase = updatedPlan.phases[phaseIndex]
+    const sprint = updatedPlan.phases[phaseIndex].sprints[sprintIndex]
+    const feature = updatedPlan.phases[phaseIndex].sprints[sprintIndex].features[featureIndex]
+
+    const oldStatus = ticket.status
+
+    // Workflow validation rules
+    if (action === 'send-to-testing' && oldStatus !== 'in-progress') {
+      setError(`Cannot send ticket to testing. The ticket must be "In Progress" first. Current status: "${oldStatus}". Please mark the ticket as "In Progress" before sending it to testing.`)
+      return
+    }
+
+    if (action === 'mark-completed' && oldStatus !== 'testing') {
+      setError(`Cannot mark ticket as completed. The ticket must be in "Testing" status first. Current status: "${oldStatus}". Please send the ticket to testing before marking it as completed.`)
+      return
+    }
+
+    const changes: string[] = []
+    const oldAssignedTo = ticket.assignedTo ? `${ticket.assignedTo.role} - ${ticket.assignedTo.name}` : 'Unassigned'
+
+    // Initialize activity log if it doesn't exist
+    if (!ticket.activityLog) {
+      ticket.activityLog = []
+    }
+
+    // Clear any previous errors
+    setError('')
+
+    // Update status based on action
+    switch (action) {
+      case 'assign':
+        if (assigneeRole && assigneeName) {
+          const newAssignedTo = `${assigneeRole} - ${assigneeName}`
+          ticket.assignedTo = { role: assigneeRole, name: assigneeName }
+          changes.push(`Assigned to: "${newAssignedTo}"`)
+          // Log assignment change
+          ticket.activityLog.push({
+            id: `activity-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+            timestamp: new Date().toISOString(),
+            type: 'assignment-change',
+            action: 'Assigned',
+            details: `Ticket assigned to ${assigneeRole} - ${assigneeName}`,
+            changedBy: 'Manager',
+            oldValue: oldAssignedTo,
+            newValue: newAssignedTo,
+          })
+        }
+        break
+      case 'mark-in-progress':
+        ticket.status = 'in-progress'
+        changes.push(`Status: "${oldStatus}" → "in-progress"`)
+        // Log status change
+        ticket.activityLog.push({
+          id: `activity-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+          timestamp: new Date().toISOString(),
+          type: 'status-change',
+          action: 'Mark In Progress',
+          details: `Status changed from "${oldStatus}" to "in-progress"`,
+          changedBy: 'Manager',
+          oldValue: oldStatus,
+          newValue: 'in-progress',
+        })
+        if (assigneeRole && assigneeName) {
+          const newAssignedTo = `${assigneeRole} - ${assigneeName}`
+          ticket.assignedTo = { role: assigneeRole, name: assigneeName }
+          changes.push(`Assigned to: "${oldAssignedTo}" → "${newAssignedTo}"`)
+          // Log assignment change
+          ticket.activityLog.push({
+            id: `activity-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+            timestamp: new Date().toISOString(),
+            type: 'assignment-change',
+            action: 'Assigned',
+            details: `Ticket assigned to ${assigneeRole} - ${assigneeName}`,
+            changedBy: 'Manager',
+            oldValue: oldAssignedTo,
+            newValue: newAssignedTo,
+          })
+        }
+        break
+      case 'send-to-testing':
+        ticket.status = 'testing'
+        changes.push(`Status: "${oldStatus}" → "testing"`)
+        // Log status change
+        ticket.activityLog.push({
+          id: `activity-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+          timestamp: new Date().toISOString(),
+          type: 'status-change',
+          action: 'Send to Testing',
+          details: `Status changed from "${oldStatus}" to "testing"`,
+          changedBy: 'Manager',
+          oldValue: oldStatus,
+          newValue: 'testing',
+        })
+        if (assigneeRole && assigneeName) {
+          const newAssignedTo = `${assigneeRole} - ${assigneeName}`
+          ticket.assignedTo = { role: assigneeRole, name: assigneeName }
+          changes.push(`Assigned to: "${oldAssignedTo}" → "${newAssignedTo}"`)
+          // Log assignment change
+          ticket.activityLog.push({
+            id: `activity-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+            timestamp: new Date().toISOString(),
+            type: 'assignment-change',
+            action: 'Assigned',
+            details: `Ticket assigned to ${assigneeRole} - ${assigneeName}`,
+            changedBy: 'Manager',
+            oldValue: oldAssignedTo,
+            newValue: newAssignedTo,
+          })
+        }
+        break
+      case 'mark-completed':
+        ticket.status = 'completed'
+        changes.push(`Status: "${oldStatus}" → "completed"`)
+        // Log status change
+        ticket.activityLog.push({
+          id: `activity-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+          timestamp: new Date().toISOString(),
+          type: 'status-change',
+          action: 'Mark Completed',
+          details: `Status changed from "${oldStatus}" to "completed"`,
+          changedBy: 'Manager',
+          oldValue: oldStatus,
+          newValue: 'completed',
+        })
+        break
+      case 'put-on-hold':
+        ticket.status = 'on-hold'
+        changes.push(`Status: "${oldStatus}" → "on-hold"`)
+        // Log status change
+        ticket.activityLog.push({
+          id: `activity-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+          timestamp: new Date().toISOString(),
+          type: 'status-change',
+          action: 'Put On Hold',
+          details: `Status changed from "${oldStatus}" to "on-hold"`,
+          changedBy: 'Manager',
+          oldValue: oldStatus,
+          newValue: 'on-hold',
+        })
+        break
+      case 'send-back-rework':
+        ticket.status = 'rework'
+        changes.push(`Status: "${oldStatus}" → "rework"`)
+        // Log status change
+        ticket.activityLog.push({
+          id: `activity-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+          timestamp: new Date().toISOString(),
+          type: 'status-change',
+          action: 'Send Back for Rework',
+          details: `Status changed from "${oldStatus}" to "rework"`,
+          changedBy: 'Manager',
+          oldValue: oldStatus,
+          newValue: 'rework',
+        })
+        if (assigneeRole && assigneeName) {
+          const newAssignedTo = `${assigneeRole} - ${assigneeName}`
+          ticket.assignedTo = { role: assigneeRole, name: assigneeName }
+          changes.push(`Assigned to: "${oldAssignedTo}" → "${newAssignedTo}"`)
+          // Log assignment change
+          ticket.activityLog.push({
+            id: `activity-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+            timestamp: new Date().toISOString(),
+            type: 'assignment-change',
+            action: 'Assigned',
+            details: `Ticket assigned to ${assigneeRole} - ${assigneeName}`,
+            changedBy: 'Manager',
+            oldValue: oldAssignedTo,
+            newValue: newAssignedTo,
+          })
+        }
+        break
+    }
+
+    ticket.lastUpdated = new Date().toISOString()
+
+    // Add change log entry
+    if (changes.length > 0) {
+      const itemPath = `${phase.name} > Sprint ${sprint.sprintNumber} > ${feature.name} > ${ticket.title}`
+      const actionLabels: Record<string, string> = {
+        'assign': 'Assign/Reassign',
+        'mark-in-progress': 'Mark In Progress',
+        'send-to-testing': 'Send to Testing',
+        'mark-completed': 'Mark Completed',
+        'put-on-hold': 'Put On Hold',
+        'send-back-rework': 'Send Back for Rework',
+      }
+      const changeLogEntry: ProjectChangeLogEntry = {
+        id: `change-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+        timestamp: new Date().toISOString(),
+        changedBy: 'Manager',
+        itemType: 'ticket',
+        itemPath,
+        changes: [`Action: ${actionLabels[action]}`, ...changes],
+      }
+      setChangeLog(prev => [changeLogEntry, ...prev])
+    }
+
+    setExecutionPlan(updatedPlan)
+  }
+
   const saveEditTicket = () => {
     if (!executionPlan || !selectedTicket || !editTicketData) return
 
@@ -599,13 +813,48 @@ export default function AnalyzeProjectPage() {
     const updatedPlan = { ...executionPlan }
     const ticket = updatedPlan.phases[selectedTicket.phaseIndex].sprints[selectedTicket.sprintIndex].features[selectedTicket.featureIndex].tickets[selectedTicket.ticketIndex]
     
+    // Initialize activity log if it doesn't exist
+    if (!ticket.activityLog) {
+      ticket.activityLog = []
+    }
+    
     ticket.title = editTicketData.title.trim()
     ticket.detailedDescription = editTicketData.detailedDescription.trim()
     ticket.estimatedDays = editTicketData.estimatedDays
     ticket.acceptanceCriteria = editTicketData.acceptanceCriteria.filter(c => c.trim().length > 0)
     ticket.uiReference = editTicketData.uiReference.trim() || undefined
     ticket.referenceImages = editTicketData.referenceImages.length > 0 ? editTicketData.referenceImages : undefined
+    
+    // Log status change if it changed
+    if (originalTicket.status !== editTicketData.status) {
+      ticket.activityLog.push({
+        id: `activity-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+        timestamp: new Date().toISOString(),
+        type: 'status-change',
+        action: 'Status Updated',
+        details: `Status changed from "${originalTicket.status}" to "${editTicketData.status}" via edit`,
+        changedBy: 'Manager',
+        oldValue: originalTicket.status,
+        newValue: editTicketData.status,
+      })
+    }
+    
     ticket.status = editTicketData.status
+    
+    // Log assignment change if it changed (using variables already declared above)
+    if (originalAssignedToStr !== editedAssignedToStr) {
+      ticket.activityLog.push({
+        id: `activity-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+        timestamp: new Date().toISOString(),
+        type: 'assignment-change',
+        action: 'Assignment Updated',
+        details: `Assignment changed from "${originalAssignedToStr}" to "${editedAssignedToStr}" via edit`,
+        changedBy: 'Manager',
+        oldValue: originalAssignedToStr,
+        newValue: editedAssignedToStr,
+      })
+    }
+    
     ticket.assignedTo = editTicketData.assignedTo || undefined
     ticket.comments = editTicketData.comments.filter(c => c.trim().length > 0).length > 0 ? editTicketData.comments.filter(c => c.trim().length > 0) : undefined
     ticket.lastUpdated = new Date().toISOString()
@@ -771,8 +1020,20 @@ export default function AnalyzeProjectPage() {
         )}
 
         {error && (
-          <div className="mb-6 bg-red-50 border border-red-200 p-4">
-            <p className="text-sm text-red-800">{error}</p>
+          <div className="mb-6 bg-red-50 border border-red-200 p-4 rounded">
+            <div className="flex items-start justify-between">
+              <div className="flex-1">
+                <p className="text-sm font-medium text-red-800 mb-1">Validation Error</p>
+                <p className="text-sm text-red-700">{error}</p>
+              </div>
+              <button
+                onClick={() => setError('')}
+                className="ml-4 text-red-600 hover:text-red-800 text-lg font-bold"
+                aria-label="Close error message"
+              >
+                ×
+              </button>
+            </div>
           </div>
         )}
 
@@ -819,9 +1080,19 @@ export default function AnalyzeProjectPage() {
                 <button
                   onClick={handleAnalyze}
                   disabled={isAnalyzing}
-                  className="w-full px-4 py-2 bg-blue-600 text-white text-sm font-medium disabled:bg-gray-400 disabled:cursor-not-allowed"
+                  className="w-full btn-ai disabled:opacity-50 disabled:cursor-not-allowed relative"
                 >
-                  {isAnalyzing ? 'Analyzing...' : 'Analyze Project'}
+                  {isAnalyzing ? (
+                    <>
+                      <span className="ai-spinner w-4 h-4 inline-block mr-2"></span>
+                      Analyzing requirements...
+                    </>
+                  ) : (
+                    <>
+                      <span className="mr-2">✨</span>
+                      AI: Analyze Project
+                    </>
+                  )}
                 </button>
               )}
               {analysis && project && !isSummaryView && (
@@ -844,9 +1115,19 @@ export default function AnalyzeProjectPage() {
                     <button
                       onClick={handleCreateExecutionPlan}
                       disabled={isGeneratingPlan}
-                      className="w-full px-4 py-2 bg-purple-600 text-white text-sm font-medium disabled:bg-gray-400 disabled:cursor-not-allowed"
+                      className="w-full btn-ai-secondary disabled:opacity-50 disabled:cursor-not-allowed relative"
                     >
-                      {isGeneratingPlan ? 'Generating...' : 'Create Execution Plan'}
+                      {isGeneratingPlan ? (
+                        <>
+                          <span className="ai-spinner w-4 h-4 inline-block mr-2"></span>
+                          Generating execution plan...
+                        </>
+                      ) : (
+                        <>
+                          <span className="mr-2">📋</span>
+                          AI: Create Execution Plan
+                        </>
+                      )}
                     </button>
                   )}
                 </>
@@ -894,10 +1175,15 @@ export default function AnalyzeProjectPage() {
         {/* Impact Summary Section */}
         {impactAnalysis && (
           <div className="mb-6">
-            <div className="bg-blue-50 border-2 border-blue-200">
-              <div className="p-4 border-b border-blue-200">
-                <h2 className="text-lg font-semibold text-blue-900">Impact Summary</h2>
-                <p className="text-xs text-blue-700 mt-1">
+            <div className="ai-container relative">
+              <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-indigo-500 via-purple-500 to-cyan-500"></div>
+              <div className="p-4 border-b border-indigo-200/50">
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="text-xl">✨</span>
+                  <h2 className="text-lg font-semibold text-gray-900">AI Impact Analysis</h2>
+                  <span className="badge-ai text-xs">AI Generated</span>
+                </div>
+                <p className="text-xs text-gray-600 mt-1">
                   Analysis of requirement changes impact on project plan
                 </p>
               </div>
@@ -911,12 +1197,15 @@ export default function AnalyzeProjectPage() {
                 {/* New Features */}
                 {impactAnalysis.newFeatures.length > 0 && (
                   <div>
-                    <h3 className="text-sm font-semibold text-gray-900 mb-3">New Features to be Added</h3>
+                    <h3 className="text-sm font-semibold text-gray-900 mb-3 flex items-center gap-2">
+                      <span className="text-green-600">+</span>
+                      New Features to be Added
+                    </h3>
                     <ul className="space-y-2">
                       {impactAnalysis.newFeatures.map((feature, index) => (
-                        <li key={index} className="flex items-start gap-2">
-                          <span className="text-blue-600 mt-1">+</span>
-                          <span className="text-sm text-gray-700">{feature}</span>
+                        <li key={index} className="flex items-start gap-2 bg-green-50/50 border border-green-200/50 rounded-md p-3">
+                          <span className="text-green-600 font-bold mt-0.5">+</span>
+                          <span className="text-sm text-gray-700 flex-1">{feature}</span>
                         </li>
                       ))}
                     </ul>
@@ -926,10 +1215,13 @@ export default function AnalyzeProjectPage() {
                 {/* Impacted Features */}
                 {impactAnalysis.impactedFeatures.length > 0 && (
                   <div>
-                    <h3 className="text-sm font-semibold text-gray-900 mb-3">Existing Features Impacted</h3>
+                    <h3 className="text-sm font-semibold text-gray-900 mb-3 flex items-center gap-2">
+                      <span className="text-amber-600">⚠</span>
+                      Existing Features Impacted
+                    </h3>
                     <div className="space-y-3">
                       {impactAnalysis.impactedFeatures.map((item, index) => (
-                        <div key={index} className="border-l-2 border-amber-400 pl-4">
+                        <div key={index} className="ai-border bg-amber-50/30 border-amber-200/50 rounded-r-md pl-4 pr-3 py-3">
                           <h4 className="text-sm font-medium text-gray-900 mb-1">{item.feature}</h4>
                           <p className="text-xs text-gray-600">{item.impactDescription}</p>
                         </div>
@@ -939,16 +1231,16 @@ export default function AnalyzeProjectPage() {
                 )}
 
                 {/* Impact Metrics */}
-                <div className="grid md:grid-cols-2 gap-4 pt-4 border-t border-blue-200">
-                  <div className="bg-white border border-gray-200 p-4">
-                    <h4 className="text-xs font-semibold text-gray-900 mb-1">Additional Time Required</h4>
-                    <p className="text-2xl font-semibold text-gray-900">
+                <div className="grid md:grid-cols-2 gap-4 pt-4 border-t border-indigo-200/50">
+                  <div className="card p-4 bg-gradient-to-br from-indigo-50/50 to-purple-50/50">
+                    <h4 className="text-xs font-semibold text-gray-700 mb-1">Additional Time Required</h4>
+                    <p className="text-2xl font-bold bg-gradient-to-r from-indigo-600 to-purple-600 bg-clip-text text-transparent">
                       +{impactAnalysis.additionalTimeWeeks} week{impactAnalysis.additionalTimeWeeks !== 1 ? 's' : ''}
                     </p>
                   </div>
-                  <div className="bg-white border border-gray-200 p-4">
-                    <h4 className="text-xs font-semibold text-gray-900 mb-1">Additional Cost</h4>
-                    <p className="text-2xl font-semibold text-gray-900">
+                  <div className="card p-4 bg-gradient-to-br from-teal-50/50 to-cyan-50/50">
+                    <h4 className="text-xs font-semibold text-gray-700 mb-1">Additional Cost</h4>
+                    <p className="text-2xl font-bold bg-gradient-to-r from-teal-600 to-cyan-600 bg-clip-text text-transparent">
                       {impactAnalysis.costCurrency} +{impactAnalysis.additionalCost.toLocaleString()}
                     </p>
                   </div>
@@ -972,12 +1264,14 @@ export default function AnalyzeProjectPage() {
         {analysis && (
           <div className="space-y-6">
             {/* Timeline Section */}
-            <div className="bg-white border border-gray-200">
-              <div className="p-4 border-b border-gray-200 flex justify-between items-center">
+            <div className="ai-container">
+              <div className="p-4 border-b border-indigo-200/50 flex justify-between items-center">
                 <div className="flex items-center gap-2">
+                  <span className="text-lg">⏱️</span>
                   <h2 className="text-lg font-semibold text-gray-900">Timeline Estimate</h2>
+                  <span className="badge-ai text-xs">AI Generated</span>
                   {managerAdjusted.has('timeline') && (
-                    <span className="text-xs bg-amber-100 text-amber-800 px-2 py-1">Manager Adjusted</span>
+                    <span className="text-xs bg-amber-100 text-amber-800 px-2 py-1 rounded-full">Manager Adjusted</span>
                   )}
                 </div>
                 {editingSection !== 'timeline' && (
@@ -1110,12 +1404,14 @@ export default function AnalyzeProjectPage() {
             </div>
 
             {/* Cost Section */}
-            <div className="bg-white border border-gray-200">
-              <div className="p-4 border-b border-gray-200 flex justify-between items-center">
+            <div className="ai-container">
+              <div className="p-4 border-b border-indigo-200/50 flex justify-between items-center">
                 <div className="flex items-center gap-2">
+                  <span className="text-lg">💰</span>
                   <h2 className="text-lg font-semibold text-gray-900">Cost Estimate</h2>
+                  <span className="badge-ai text-xs">AI Generated</span>
                   {managerAdjusted.has('cost') && (
-                    <span className="text-xs bg-amber-100 text-amber-800 px-2 py-1">Manager Adjusted</span>
+                    <span className="text-xs bg-amber-100 text-amber-800 px-2 py-1 rounded-full">Manager Adjusted</span>
                   )}
                 </div>
                 {editingSection !== 'cost' && (
@@ -1237,12 +1533,14 @@ export default function AnalyzeProjectPage() {
             </div>
 
             {/* Team Section */}
-            <div className="bg-white border border-gray-200">
-              <div className="p-4 border-b border-gray-200 flex justify-between items-center">
+            <div className="ai-container">
+              <div className="p-4 border-b border-indigo-200/50 flex justify-between items-center">
                 <div className="flex items-center gap-2">
+                  <span className="text-lg">👥</span>
                   <h2 className="text-lg font-semibold text-gray-900">Team Composition</h2>
+                  <span className="badge-ai text-xs">AI Generated</span>
                   {managerAdjusted.has('team') && (
-                    <span className="text-xs bg-amber-100 text-amber-800 px-2 py-1">Manager Adjusted</span>
+                    <span className="text-xs bg-amber-100 text-amber-800 px-2 py-1 rounded-full">Manager Adjusted</span>
                   )}
                 </div>
                 {editingSection !== 'team' && (
@@ -1587,9 +1885,10 @@ export default function AnalyzeProjectPage() {
                               setError(err instanceof Error ? err.message : 'Failed to revise project plan')
                             }
                           }}
-                          className="px-4 py-2 bg-blue-600 text-white text-sm font-medium"
+                          className="btn-ai"
                         >
-                          Add Suggestions to Project ({selectedRecommendations.size})
+                          <span className="mr-2">✨</span>
+                          AI: Apply {selectedRecommendations.size} Suggestion{selectedRecommendations.size !== 1 ? 's' : ''}
                         </button>
                       </div>
                     )}
@@ -1617,52 +1916,77 @@ export default function AnalyzeProjectPage() {
         {/* Execution Plan Section */}
         {executionPlan && (
           <div className="mt-6">
-            <div className="bg-white border border-gray-200">
-              <div className="p-4 border-b border-gray-200">
+            <div className="ai-container">
+              <div className="p-4 border-b border-indigo-200/50">
                 <div className="flex justify-between items-start">
-                  <div>
-                    <h2 className="text-lg font-semibold text-gray-900">Execution Plan</h2>
-                    <p className="text-xs text-gray-600 mt-1">
-                      {executionPlan.durationWeeks} weeks plan starting {new Date(executionPlan.startDate).toLocaleDateString()}
-                    </p>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xl">📋</span>
+                    <div>
+                      <h2 className="text-lg font-semibold text-gray-900">Execution Plan</h2>
+                      <p className="text-xs text-gray-600 mt-1">
+                        {executionPlan.durationWeeks} weeks plan starting {new Date(executionPlan.startDate).toLocaleDateString()}
+                      </p>
+                    </div>
+                    <span className="badge-ai text-xs">AI Generated</span>
                   </div>
                   <button
                     onClick={handleExtendExecutionPlan}
                     disabled={isGeneratingPlan}
-                    className="px-4 py-2 bg-indigo-600 text-white text-sm font-medium disabled:bg-gray-400 disabled:cursor-not-allowed"
+                    className="btn-ai-secondary disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    {isGeneratingPlan ? 'Extending...' : 'Plan Next Month'}
+                    {isGeneratingPlan ? (
+                      <>
+                        <span className="ai-spinner w-4 h-4 inline-block mr-2"></span>
+                        Extending plan...
+                      </>
+                    ) : (
+                      <>
+                        <span className="mr-2">📅</span>
+                        AI: Plan Next Month
+                      </>
+                    )}
                   </button>
                 </div>
               </div>
               <div className="p-6">
                 <div className="space-y-4">
                   {executionPlan.phases.map((phase, phaseIndex) => (
-                    <div key={phaseIndex} className="border border-gray-200">
+                    <div key={phaseIndex} className="card border-2 border-indigo-200/50">
                       <button
                         onClick={() => toggleSection(`phase-${phaseIndex}`)}
-                        className="w-full p-4 bg-gray-50 hover:bg-gray-100 text-left flex justify-between items-center"
+                        className="w-full p-4 bg-gradient-to-r from-indigo-50 to-purple-50 hover:from-indigo-100 hover:to-purple-100 text-left flex justify-between items-center transition-all"
                       >
-                        <h3 className="text-sm font-semibold text-gray-900">{phase.name}</h3>
+                        <div className="flex items-center gap-2">
+                          <span className="text-lg">🎯</span>
+                          <h3 className="text-sm font-semibold text-gray-900">{phase.name}</h3>
+                        </div>
                         <span className="text-xs text-gray-500">
                           {expandedSections.has(`phase-${phaseIndex}`) ? '▼' : '▶'}
                         </span>
                       </button>
                       {expandedSections.has(`phase-${phaseIndex}`) && (
                         <div className="p-4 space-y-4">
-                          {phase.sprints.map((sprint, sprintIndex) => (
-                            <div key={sprintIndex} className="border border-gray-200 bg-white">
+                          {phase.sprints.map((sprint, sprintIndex) => {
+                            const isSelected = selectedSprint?.phaseIndex === phaseIndex && selectedSprint?.sprintIndex === sprintIndex
+                            return (
+                            <div key={sprintIndex} className={`border-2 ${isSelected ? 'border-indigo-400 bg-indigo-50/30' : 'border-teal-200 bg-white'} rounded-md ml-4 mt-3`}>
                               <button
-                                onClick={() => toggleSection(`sprint-${phaseIndex}-${sprintIndex}`)}
-                                className="w-full p-3 bg-gray-50 hover:bg-gray-100 text-left flex justify-between items-center"
+                                onClick={() => {
+                                  setSelectedSprint({ phaseIndex, sprintIndex })
+                                  toggleSection(`sprint-${phaseIndex}-${sprintIndex}`)
+                                }}
+                                className={`w-full p-3 bg-gradient-to-r ${isSelected ? 'from-indigo-100 to-purple-100' : 'from-teal-50 to-cyan-50'} hover:from-teal-100 hover:to-cyan-100 text-left flex justify-between items-center transition-all`}
                               >
-                                <div>
+                                <div className="flex items-center gap-2">
+                                  <span className="text-sm">🏃</span>
+                                  <div>
                                   <h4 className="text-sm font-medium text-gray-900">
                                     Sprint {sprint.sprintNumber}
                                   </h4>
                                   <p className="text-xs text-gray-500">
                                     {new Date(sprint.startDate).toLocaleDateString()} - {new Date(sprint.endDate).toLocaleDateString()}
                                   </p>
+                                  </div>
                                 </div>
                                 <span className="text-xs text-gray-500">
                                   {expandedSections.has(`sprint-${phaseIndex}-${sprintIndex}`) ? '▼' : '▶'}
@@ -1747,10 +2071,14 @@ export default function AnalyzeProjectPage() {
                                                                 {ticket.estimatedDays} days
                                                               </span>
                                                             )}
-                                                            <span className={`text-xs px-2 py-1 ${
-                                                              ticket.status === 'completed' ? 'bg-green-100 text-green-800' :
-                                                              ticket.status === 'in-progress' ? 'bg-blue-100 text-blue-800' :
-                                                              'bg-gray-100 text-gray-800'
+                                                            <span className={`badge ${
+                                                              ticket.status === 'planned' ? 'badge-planned' :
+                                                              ticket.status === 'in-progress' ? 'badge-in-progress' :
+                                                              ticket.status === 'testing' ? 'badge-testing' :
+                                                              ticket.status === 'on-hold' ? 'badge-on-hold' :
+                                                              ticket.status === 'completed' ? 'badge-completed' :
+                                                              ticket.status === 'rework' ? 'badge-rework' :
+                                                              'badge-planned'
                                                             }`}>
                                                               {ticket.status}
                                                             </span>
@@ -1846,12 +2174,15 @@ export default function AnalyzeProjectPage() {
                                                             <label className="text-xs font-semibold text-gray-900 mb-1 block">Status *</label>
                                                             <select
                                                               value={editTicketData.status}
-                                                              onChange={(e) => setEditTicketData({ ...editTicketData, status: e.target.value as 'planned' | 'in-progress' | 'completed' })}
+                                                              onChange={(e) => setEditTicketData({ ...editTicketData, status: e.target.value as 'planned' | 'in-progress' | 'testing' | 'completed' | 'on-hold' | 'rework' })}
                                                               className="w-full px-3 py-2 border border-gray-300 text-sm"
                                                             >
                                                               <option value="planned">Planned</option>
                                                               <option value="in-progress">In Progress</option>
+                                                              <option value="testing">Testing</option>
                                                               <option value="completed">Completed</option>
+                                                              <option value="on-hold">On Hold</option>
+                                                              <option value="rework">Rework</option>
                                                             </select>
                                                           </div>
                                                           <div>
@@ -2009,6 +2340,153 @@ export default function AnalyzeProjectPage() {
                                                               Edit
                                                             </button>
                                                           </div>
+                                                          {/* Ticket Actions */}
+                                                          <div className="mb-3 pb-3 border-b border-gray-200">
+                                                            <div className="text-xs font-semibold text-gray-900 mb-2">Actions</div>
+                                                            <div className="flex flex-wrap gap-1.5">
+                                                              {ticket.status === 'planned' && (
+                                                                <>
+                                                                  <button
+                                                                    onClick={(e) => {
+                                                                      e.stopPropagation()
+                                                                      const role = prompt('Enter role (e.g., Developer, QA Engineer):')
+                                                                      const name = prompt('Enter name:')
+                                                                      if (role && name) {
+                                                                        handleTicketAction(phaseIndex, sprintIndex, featureIndex, ticketIndex, 'assign', role, name)
+                                                                      }
+                                                                    }}
+                                                                    className="text-xs px-2 py-1 bg-blue-100 text-blue-800 border border-blue-300 hover:bg-blue-200"
+                                                                  >
+                                                                    Assign
+                                                                  </button>
+                                                                  <button
+                                                                    onClick={(e) => {
+                                                                      e.stopPropagation()
+                                                                      const role = prompt('Enter role (e.g., Developer, QA Engineer):')
+                                                                      const name = prompt('Enter name:')
+                                                                      if (role && name) {
+                                                                        handleTicketAction(phaseIndex, sprintIndex, featureIndex, ticketIndex, 'mark-in-progress', role, name)
+                                                                      }
+                                                                    }}
+                                                                    className="text-xs px-2 py-1 bg-green-100 text-green-800 border border-green-300 hover:bg-green-200"
+                                                                  >
+                                                                    Mark In Progress
+                                                                  </button>
+                                                                </>
+                                                              )}
+                                                              {ticket.status === 'in-progress' && (
+                                                                <>
+                                                                  <button
+                                                                    onClick={(e) => {
+                                                                      e.stopPropagation()
+                                                                      const role = prompt('Enter QA role (e.g., QA Engineer):')
+                                                                      const name = prompt('Enter name:')
+                                                                      if (role && name) {
+                                                                        handleTicketAction(phaseIndex, sprintIndex, featureIndex, ticketIndex, 'send-to-testing', role, name)
+                                                                      }
+                                                                    }}
+                                                                    className="text-xs px-2 py-1 bg-purple-100 text-purple-800 border border-purple-300 hover:bg-purple-200"
+                                                                  >
+                                                                    Send to Testing
+                                                                  </button>
+                                                                  <button
+                                                                    onClick={(e) => {
+                                                                      e.stopPropagation()
+                                                                      handleTicketAction(phaseIndex, sprintIndex, featureIndex, ticketIndex, 'mark-completed')
+                                                                    }}
+                                                                    className="text-xs px-2 py-1 bg-green-100 text-green-800 border border-green-300 hover:bg-green-200"
+                                                                  >
+                                                                    Mark Completed
+                                                                  </button>
+                                                                  <button
+                                                                    onClick={(e) => {
+                                                                      e.stopPropagation()
+                                                                      handleTicketAction(phaseIndex, sprintIndex, featureIndex, ticketIndex, 'put-on-hold')
+                                                                    }}
+                                                                    className="text-xs px-2 py-1 bg-yellow-100 text-yellow-800 border border-yellow-300 hover:bg-yellow-200"
+                                                                  >
+                                                                    Put On Hold
+                                                                  </button>
+                                                                </>
+                                                              )}
+                                                              {ticket.status === 'testing' && (
+                                                                <>
+                                                                  <button
+                                                                    onClick={(e) => {
+                                                                      e.stopPropagation()
+                                                                      handleTicketAction(phaseIndex, sprintIndex, featureIndex, ticketIndex, 'mark-completed')
+                                                                    }}
+                                                                    className="text-xs px-2 py-1 bg-green-100 text-green-800 border border-green-300 hover:bg-green-200"
+                                                                  >
+                                                                    Mark Completed
+                                                                  </button>
+                                                                  <button
+                                                                    onClick={(e) => {
+                                                                      e.stopPropagation()
+                                                                      const role = prompt('Enter role for rework (e.g., Developer):')
+                                                                      const name = prompt('Enter name:')
+                                                                      handleTicketAction(phaseIndex, sprintIndex, featureIndex, ticketIndex, 'send-back-rework', role || undefined, name || undefined)
+                                                                    }}
+                                                                    className="text-xs px-2 py-1 bg-orange-100 text-orange-800 border border-orange-300 hover:bg-orange-200"
+                                                                  >
+                                                                    Send Back for Rework
+                                                                  </button>
+                                                                </>
+                                                              )}
+                                                              {ticket.status === 'completed' && (
+                                                                <span className="text-xs text-gray-500">No actions available</span>
+                                                              )}
+                                                              {ticket.status === 'on-hold' && (
+                                                                <>
+                                                                  <button
+                                                                    onClick={(e) => {
+                                                                      e.stopPropagation()
+                                                                      const role = prompt('Enter role (e.g., Developer, QA Engineer):')
+                                                                      const name = prompt('Enter name:')
+                                                                      if (role && name) {
+                                                                        handleTicketAction(phaseIndex, sprintIndex, featureIndex, ticketIndex, 'mark-in-progress', role, name)
+                                                                      }
+                                                                    }}
+                                                                    className="text-xs px-2 py-1 bg-blue-100 text-blue-800 border border-blue-300 hover:bg-blue-200"
+                                                                  >
+                                                                    Resume (Mark In Progress)
+                                                                  </button>
+                                                                </>
+                                                              )}
+                                                              {ticket.status === 'rework' && (
+                                                                <>
+                                                                  <button
+                                                                    onClick={(e) => {
+                                                                      e.stopPropagation()
+                                                                      const role = prompt('Enter role (e.g., Developer):')
+                                                                      const name = prompt('Enter name:')
+                                                                      if (role && name) {
+                                                                        handleTicketAction(phaseIndex, sprintIndex, featureIndex, ticketIndex, 'mark-in-progress', role, name)
+                                                                      }
+                                                                    }}
+                                                                    className="text-xs px-2 py-1 bg-blue-100 text-blue-800 border border-blue-300 hover:bg-blue-200"
+                                                                  >
+                                                                    Resume (Mark In Progress)
+                                                                  </button>
+                                                                </>
+                                                              )}
+                                                              {ticket.assignedTo && (
+                                                                <button
+                                                                  onClick={(e) => {
+                                                                    e.stopPropagation()
+                                                                    const role = prompt('Enter new role (e.g., Developer, QA Engineer):', ticket.assignedTo?.role)
+                                                                    const name = prompt('Enter new name:', ticket.assignedTo?.name)
+                                                                    if (role && name) {
+                                                                      handleTicketAction(phaseIndex, sprintIndex, featureIndex, ticketIndex, 'assign', role, name)
+                                                                    }
+                                                                  }}
+                                                                  className="text-xs px-2 py-1 bg-gray-100 text-gray-800 border border-gray-300 hover:bg-gray-200"
+                                                                >
+                                                                  Reassign
+                                                                </button>
+                                                              )}
+                                                            </div>
+                                                          </div>
                                                           {ticket.detailedDescription && (
                                                             <div>
                                                               <div className="text-xs font-semibold text-gray-900 mb-1">Detailed Description</div>
@@ -2084,6 +2562,93 @@ export default function AnalyzeProjectPage() {
                                                               </div>
                                                             </div>
                                                           )}
+                                                          {ticket.assignedTo && (
+                                                            <div>
+                                                              <div className="text-xs font-semibold text-gray-900 mb-1">Assigned To</div>
+                                                              <p className="text-xs text-gray-700">
+                                                                <span className="font-medium">{ticket.assignedTo.role}</span> - {ticket.assignedTo.name}
+                                                              </p>
+                                                            </div>
+                                                          )}
+                                                          {ticket.lastUpdated && (
+                                                            <div>
+                                                              <div className="text-xs font-semibold text-gray-900 mb-1">Last Updated</div>
+                                                              <p className="text-xs text-gray-700">
+                                                                {new Date(ticket.lastUpdated).toLocaleString()}
+                                                              </p>
+                                                            </div>
+                                                          )}
+                                                          {ticket.comments && ticket.comments.length > 0 && (
+                                                            <div>
+                                                              <div className="text-xs font-semibold text-gray-900 mb-2">Comments</div>
+                                                              <div className="space-y-2">
+                                                                {ticket.comments.map((comment, idx) => (
+                                                                  <div key={idx} className="text-xs text-gray-700 bg-gray-50 p-2 border border-gray-200 whitespace-pre-wrap">
+                                                                    {comment}
+                                                                  </div>
+                                                                ))}
+                                                              </div>
+                                                            </div>
+                                                          )}
+                                                          {/* Activity History */}
+                                                          <div className="mt-4 pt-4 border-t border-gray-200">
+                                                            <button
+                                                              onClick={(e) => {
+                                                                e.stopPropagation()
+                                                                const activitySectionId = `activity-${phaseIndex}-${sprintIndex}-${featureIndex}-${ticketIndex}`
+                                                                toggleSection(activitySectionId)
+                                                              }}
+                                                              className="w-full flex items-center justify-between text-xs font-semibold text-gray-900 hover:text-blue-600"
+                                                            >
+                                                              <span>Activity History</span>
+                                                              <span className="text-xs text-gray-500">
+                                                                {expandedSections.has(`activity-${phaseIndex}-${sprintIndex}-${featureIndex}-${ticketIndex}`) ? '▼' : '▶'}
+                                                              </span>
+                                                            </button>
+                                                            {expandedSections.has(`activity-${phaseIndex}-${sprintIndex}-${featureIndex}-${ticketIndex}`) && (
+                                                              <div className="mt-3 space-y-2">
+                                                                {ticket.activityLog && ticket.activityLog.length > 0 ? (
+                                                                  ticket.activityLog
+                                                                    .slice()
+                                                                    .reverse()
+                                                                    .map((activity, idx) => (
+                                                                      <div key={activity.id} className="border border-gray-200 bg-gray-50 p-2 rounded">
+                                                                        <div className="flex items-start justify-between mb-1">
+                                                                          <div className="flex-1">
+                                                                            <div className="flex items-center gap-2 mb-1">
+                                                                              <span className={`text-xs px-2 py-0.5 rounded ${
+                                                                                activity.type === 'status-change' ? 'bg-blue-100 text-blue-800' :
+                                                                                activity.type === 'assignment-change' ? 'bg-green-100 text-green-800' :
+                                                                                'bg-purple-100 text-purple-800'
+                                                                              }`}>
+                                                                                {activity.type === 'status-change' ? 'Status' :
+                                                                                 activity.type === 'assignment-change' ? 'Assignment' :
+                                                                                 'Requirement Impact'}
+                                                                              </span>
+                                                                              <span className="text-xs font-medium text-gray-900">{activity.action}</span>
+                                                                            </div>
+                                                                            <p className="text-xs text-gray-700">{activity.details}</p>
+                                                                            {activity.oldValue && activity.newValue && (
+                                                                              <p className="text-xs text-gray-500 mt-1">
+                                                                                {activity.oldValue} → {activity.newValue}
+                                                                              </p>
+                                                                            )}
+                                                                          </div>
+                                                                        </div>
+                                                                        <div className="flex items-center justify-between mt-2 pt-2 border-t border-gray-200">
+                                                                          <span className="text-xs text-gray-500">
+                                                                            {new Date(activity.timestamp).toLocaleString()}
+                                                                          </span>
+                                                                          <span className="text-xs text-gray-500">by {activity.changedBy}</span>
+                                                                        </div>
+                                                                      </div>
+                                                                    ))
+                                                                ) : (
+                                                                  <p className="text-xs text-gray-500 italic">No activity history available</p>
+                                                                )}
+                                                              </div>
+                                                            )}
+                                                          </div>
                                                         </>
                                                       )}
                                                     </div>
@@ -2100,7 +2665,8 @@ export default function AnalyzeProjectPage() {
                                 </div>
                               )}
                             </div>
-                          ))}
+                            )
+                          })}
                         </div>
                       )}
                     </div>
