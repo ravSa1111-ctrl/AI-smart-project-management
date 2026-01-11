@@ -6,6 +6,7 @@ export interface Project {
   name: string
   description: string
   requirements: string
+  requirementsSource?: 'manual' | 'document' // Track whether requirements came from manual input or uploaded document
   status: 'draft' | 'analyzing' | 'approved' | 'rejected'
   createdAt: string
   updatedAt: string

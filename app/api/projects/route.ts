@@ -20,7 +20,7 @@ export async function GET() {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
-    const { name, description, requirements, analysis } = body
+    const { name, description, requirements, requirementsSource, analysis } = body
 
     // Required fields for creation
     if (!name || !description || !requirements) {
@@ -30,11 +30,12 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // analysis is optional during creation
+    // analysis and requirementsSource are optional during creation
     const project = storage.createProject({
       name,
       description,
       requirements,
+      ...(requirementsSource && { requirementsSource }), // Only include if provided
       ...(analysis && { analysis }), // Only include if provided
     })
 

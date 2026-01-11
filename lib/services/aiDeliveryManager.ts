@@ -365,6 +365,93 @@ export interface ReviseProjectPlanRequest {
   originalRequirements: string
 }
 
+// Requirement Impact Analysis
+
+export interface RequirementImpactAnalysis {
+  newFeatures: string[]
+  impactedFeatures: Array<{
+    feature: string
+    impactDescription: string
+  }>
+  additionalTimeWeeks: number
+  additionalCost: number
+  costCurrency: string
+  summary: string
+}
+
+export interface AnalyzeRequirementImpactRequest {
+  originalRequirements: string
+  newRequirements: string
+  originalAnalysis: ProjectAnalysis
+  projectName: string
+  projectDescription: string
+}
+
+/**
+ * Analyzes the impact of requirement changes on an existing project plan
+ * Compares new requirements with existing plan and identifies changes
+ */
+export async function analyzeRequirementImpact(
+  request: AnalyzeRequirementImpactRequest
+): Promise<RequirementImpactAnalysis> {
+  // TODO: Replace with actual AI API call
+  // For now, return mock impact analysis based on requirement comparison
+
+  // Simulate AI processing delay
+  await new Promise(resolve => setTimeout(resolve, 1000))
+
+  const { originalRequirements, newRequirements, originalAnalysis } = request
+
+  // Simple comparison logic (in production, use AI to compare)
+  const originalWords = new Set(originalRequirements.toLowerCase().split(/\s+/))
+  const newWords = new Set(newRequirements.toLowerCase().split(/\s+/))
+  
+  // Find new keywords (simplified comparison)
+  const newKeywords = Array.from(newWords).filter(word => 
+    word.length > 4 && !originalWords.has(word)
+  ).slice(0, 5)
+
+  // Estimate additional complexity based on length difference
+  const lengthDiff = newRequirements.length - originalRequirements.length
+  const complexityMultiplier = lengthDiff > 500 ? 1.5 : lengthDiff > 200 ? 1.3 : 1.1
+
+  // Calculate additional time (based on complexity and original timeline)
+  const additionalTimeWeeks = Math.max(1, Math.ceil(
+    (originalAnalysis.timeline.estimatedWeeks * (complexityMultiplier - 1)) * 0.3
+  ))
+
+  // Calculate additional cost (based on additional time and original cost per week)
+  const costPerWeek = originalAnalysis.cost.estimatedTotal / originalAnalysis.timeline.estimatedWeeks
+  const additionalCost = Math.ceil(additionalTimeWeeks * costPerWeek * 1.2) // 20% buffer for complexity
+
+  // Generate new features (mock based on new keywords)
+  const newFeatures = newKeywords.length > 0
+    ? [
+        `Enhanced ${newKeywords[0] || 'functionality'} integration`,
+        `New ${newKeywords[1] || 'feature'} capabilities`,
+        `Improved ${newKeywords[2] || 'system'} components`,
+      ].filter(Boolean).slice(0, 3)
+    : ['Additional feature enhancements', 'Extended functionality', 'New capabilities']
+
+  // Generate impacted features (mock based on analysis)
+  const impactedFeatures = originalAnalysis.timeline.phases.slice(0, 3).map((phase, index) => ({
+    feature: phase.name,
+    impactDescription: `Requires adjustments to ${phase.name.toLowerCase()} phase deliverables and timeline`,
+  }))
+
+  // Generate summary
+  const summary = `Requirement changes introduce ${newFeatures.length} new features and impact ${impactedFeatures.length} existing phases. Additional time: ${additionalTimeWeeks} weeks. Additional cost: ${originalAnalysis.cost.currency} ${additionalCost.toLocaleString()}.`
+
+  return {
+    newFeatures,
+    impactedFeatures,
+    additionalTimeWeeks,
+    additionalCost,
+    costCurrency: originalAnalysis.cost.currency,
+    summary,
+  }
+}
+
 /**
  * Revises a project plan based on selected recommendations
  * Adjusts timeline, cost, risks, and team based on applied suggestions
@@ -586,13 +673,31 @@ export interface Feature {
   tickets: Ticket[]
 }
 
+export interface TicketReferenceImage {
+  name: string
+  previewUrl: string // base64 or local URL
+}
+
 export interface Ticket {
   day: number
   date: string
   title: string
   description: string
-  assignee?: string
+  detailedDescription: string
+  estimatedDays: number // 1-3 days
+  acceptanceCriteria: string[]
+  dependencies?: string[] // Optional ticket IDs or titles this depends on
+  uiReference?: string // URL or placeholder for UI reference (optional)
+  referenceImages?: TicketReferenceImage[] // Array of reference images
+  metadata?: string[] // Optional metadata notes (e.g., "Visual references provided by manager")
+  assignee?: string // Legacy field - use assignedTo instead
   status: 'planned' | 'in-progress' | 'completed'
+  assignedTo?: {
+    role: string
+    name: string
+  }
+  lastUpdated?: string // ISO timestamp
+  comments?: string[] // Optional array of comments
 }
 
 export interface GenerateExecutionPlanRequest {
@@ -924,7 +1029,9 @@ function assignFeaturesToSprint(
 }
 
 /**
- * Generates daily tickets for a feature
+ * Generates tickets for a feature with multi-day support
+ * Complex tasks are grouped into multi-day tickets (1-3 days)
+ * Simpler tasks remain single-day
  */
 function generateTicketsForFeature(
   feature: Feature,
@@ -934,32 +1041,221 @@ function generateTicketsForFeature(
   const tickets: Ticket[] = []
   const workingDays = 10 // 2 weeks = 10 working days
   
-  // Determine number of tickets based on feature complexity
-  const ticketCount = Math.min(workingDays, 5) // Max 5 tickets per feature
+  // Determine ticket definitions based on feature complexity
+  const ticketDefinitions = getTicketDefinitionsForFeature(feature)
   
-  for (let i = 0; i < ticketCount; i++) {
-    const day = sprintStartDay + i
+  let currentDay = sprintStartDay
+  
+  for (const ticketDef of ticketDefinitions) {
+    if (currentDay >= sprintStartDay + workingDays) break
+    
     const ticketDate = new Date(sprintStartDate)
-    ticketDate.setDate(ticketDate.getDate() + i)
+    ticketDate.setDate(ticketDate.getDate() + (currentDay - sprintStartDay))
     
-    const ticketTitles = [
-      `Design ${feature.name}`,
-      `Implement ${feature.name} - Part 1`,
-      `Implement ${feature.name} - Part 2`,
-      `Test ${feature.name}`,
-      `Review & Refine ${feature.name}`,
-      `Document ${feature.name}`,
-      `Integrate ${feature.name}`,
-    ]
-    
+    const now = new Date()
     tickets.push({
-      day: day + 1,
+      day: currentDay + 1,
       date: ticketDate.toISOString().split('T')[0],
-      title: ticketTitles[i % ticketTitles.length],
-      description: `Daily task for ${feature.name} on day ${i + 1} of sprint`,
+      title: ticketDef.title,
+      description: ticketDef.description,
+      detailedDescription: ticketDef.detailedDescription,
+      estimatedDays: ticketDef.estimatedDays,
+      acceptanceCriteria: ticketDef.acceptanceCriteria,
+      dependencies: ticketDef.dependencies,
+      uiReference: ticketDef.uiReference,
       status: 'planned',
+      lastUpdated: now.toISOString(),
+      // assignedTo and comments are optional and can be set later
     })
+    
+    currentDay += ticketDef.estimatedDays
   }
   
   return tickets
+}
+
+/**
+ * Returns ticket definitions for a feature
+ * Groups complex tasks into multi-day tickets (2-3 days)
+ * Keeps simpler tasks as single-day tickets (1 day)
+ */
+function getTicketDefinitionsForFeature(feature: Feature): Array<{
+  title: string
+  description: string
+  detailedDescription: string
+  estimatedDays: number
+  acceptanceCriteria: string[]
+  dependencies?: string[]
+  uiReference?: string
+}> {
+  const featureName = feature.name
+  const featureLower = featureName.toLowerCase()
+  
+  // Detect if feature is frontend-related
+  const isFrontendFeature = 
+    featureLower.includes('frontend') ||
+    featureLower.includes('ui') ||
+    featureLower.includes('interface') ||
+    featureLower.includes('dashboard') ||
+    featureLower.includes('login') ||
+    featureLower.includes('form') ||
+    featureLower.includes('page') ||
+    featureLower.includes('screen') ||
+    featureLower.includes('component') ||
+    featureLower.includes('layout') ||
+    featureLower.includes('view')
+  
+  // Complex features get multi-day tickets
+  const isComplexFeature = 
+    featureLower.includes('authentication') ||
+    featureLower.includes('api') ||
+    featureLower.includes('database') ||
+    featureLower.includes('integration') ||
+    featureLower.includes('setup') ||
+    featureLower.includes('pipeline') ||
+    featureLower.includes('deployment')
+  
+  // Helper function to get UI reference for frontend tickets
+  const getUIReference = (ticketTitle: string): string | undefined => {
+    if (!isFrontendFeature) return undefined
+    
+    const titleLower = ticketTitle.toLowerCase()
+    
+    // Design/Planning tickets
+    if (titleLower.includes('design') || titleLower.includes('plan')) {
+      if (featureLower.includes('login') || featureLower.includes('authentication')) {
+        return 'Wireframe: Login Page'
+      } else if (featureLower.includes('dashboard')) {
+        return 'Dashboard Layout Reference'
+      } else if (featureLower.includes('form')) {
+        return 'Form UI – Basic CRUD Screen'
+      } else {
+        return `Wireframe: ${featureName}`
+      }
+    }
+    
+    // Implementation tickets
+    if (titleLower.includes('implement')) {
+      if (featureLower.includes('login') || featureLower.includes('authentication')) {
+        return 'Login Page UI Reference'
+      } else if (featureLower.includes('dashboard')) {
+        return 'Dashboard Component Layout'
+      } else if (featureLower.includes('form')) {
+        return 'Form UI – CRUD Screen Layout'
+      } else if (featureLower.includes('list') || featureLower.includes('table')) {
+        return 'Data Table UI Reference'
+      } else {
+        return `${featureName} UI Component Reference`
+      }
+    }
+    
+    // Testing/Review tickets
+    if (titleLower.includes('test') || titleLower.includes('review')) {
+      return `${featureName} UI Testing Reference`
+    }
+    
+    return undefined
+  }
+  
+  if (isComplexFeature) {
+    // Multi-day tickets for complex features
+    return [
+      {
+        title: `Design & Plan ${featureName}`,
+        description: `Design architecture and create implementation plan for ${featureName}`,
+        detailedDescription: `Create detailed design documentation including architecture diagrams, data models, API contracts, and implementation approach. Review with team and get approval before implementation.`,
+        estimatedDays: 2,
+        acceptanceCriteria: [
+          'Design documentation complete and reviewed',
+          'Architecture diagrams created',
+          'API contracts defined (if applicable)',
+          'Team review completed',
+        ],
+        uiReference: getUIReference(`Design & Plan ${featureName}`),
+      },
+      {
+        title: `Implement ${featureName} - Core Logic`,
+        description: `Implement core functionality for ${featureName}`,
+        detailedDescription: `Develop the main implementation including business logic, data access layer, and core functionality. Follow coding standards and best practices.`,
+        estimatedDays: 3,
+        acceptanceCriteria: [
+          'Core logic implemented',
+          'Unit tests written (minimum 80% coverage)',
+          'Code review completed',
+          'All tests passing',
+        ],
+        dependencies: [`Design & Plan ${featureName}`],
+        uiReference: getUIReference(`Implement ${featureName} - Core Logic`),
+      },
+      {
+        title: `Integrate & Test ${featureName}`,
+        description: `Integration testing and refinement for ${featureName}`,
+        detailedDescription: `Integrate with other components, perform integration testing, fix issues, and refine implementation based on test results.`,
+        estimatedDays: 2,
+        acceptanceCriteria: [
+          'Integration tests passing',
+          'No critical bugs',
+          'Performance meets requirements',
+          'Documentation updated',
+        ],
+        dependencies: [`Implement ${featureName} - Core Logic`],
+        uiReference: getUIReference(`Integrate & Test ${featureName}`),
+      },
+      {
+        title: `Review & Refine ${featureName}`,
+        description: `Final review and polish for ${featureName}`,
+        detailedDescription: `Perform final code review, refactoring if needed, update documentation, and ensure code quality standards are met.`,
+        estimatedDays: 1,
+        acceptanceCriteria: [
+          'Code review completed',
+          'Documentation updated',
+          'Ready for deployment',
+        ],
+        dependencies: [`Integrate & Test ${featureName}`],
+        uiReference: getUIReference(`Review & Refine ${featureName}`),
+      },
+    ]
+  } else {
+    // Single-day tickets for simpler features
+    return [
+      {
+        title: `Design ${featureName}`,
+        description: `Create design for ${featureName}`,
+        detailedDescription: `Design the feature, create mockups or wireframes, and define acceptance criteria.`,
+        estimatedDays: 1,
+        acceptanceCriteria: [
+          'Design document created',
+          'Mockups/wireframes ready',
+          'Acceptance criteria defined',
+        ],
+        uiReference: getUIReference(`Design ${featureName}`),
+      },
+      {
+        title: `Implement ${featureName}`,
+        description: `Implement ${featureName}`,
+        detailedDescription: `Develop the feature according to design, write tests, and ensure code quality.`,
+        estimatedDays: 2,
+        acceptanceCriteria: [
+          'Implementation complete',
+          'Unit tests written',
+          'Code review completed',
+        ],
+        dependencies: [`Design ${featureName}`],
+        uiReference: getUIReference(`Implement ${featureName}`),
+      },
+      {
+        title: `Test ${featureName}`,
+        description: `Test ${featureName}`,
+        detailedDescription: `Perform thorough testing including unit tests, integration tests, and manual testing. Fix any bugs found.`,
+        estimatedDays: 1,
+        acceptanceCriteria: [
+          'All tests passing',
+          'No critical bugs',
+          'Feature works as expected',
+        ],
+        dependencies: [`Implement ${featureName}`],
+        uiReference: getUIReference(`Test ${featureName}`),
+      },
+    ]
+  }
 }

@@ -3,14 +3,16 @@
 import { useState, useEffect } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
-import { analyzeProject, reviseProjectPlan, generateExecutionPlan, extendExecutionPlan, generateRevisionChangeLog } from '@/lib/services/aiDeliveryManager'
+import { analyzeProject, reviseProjectPlan, generateExecutionPlan, extendExecutionPlan, generateRevisionChangeLog, analyzeRequirementImpact, updateExecutionPlanForRequirements } from '@/lib/services/aiDeliveryManager'
 import type { Project, ProjectAnalysis, Phase, CostBreakdown, TeamMember, Risk } from '@/lib/data/mockStorage'
-import type { ExecutionPlan } from '@/lib/services/aiDeliveryManager'
+import type { ExecutionPlan, TicketReferenceImage, RequirementImpactAnalysis } from '@/lib/services/aiDeliveryManager'
 
 export default function AnalyzeProjectPage() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const projectId = searchParams.get('id')
+  const viewMode = searchParams.get('view') // 'summary' or null (full mode)
+  const isSummaryView = viewMode === 'summary'
 
   const [project, setProject] = useState<Project | null>(null)
   const [analysis, setAnalysis] = useState<ProjectAnalysis | null>(null)
@@ -36,6 +38,52 @@ export default function AnalyzeProjectPage() {
   const [executionPlan, setExecutionPlan] = useState<ExecutionPlan | null>(null)
   const [isGeneratingPlan, setIsGeneratingPlan] = useState(false)
   const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set())
+  
+  // Selected item state for detail views
+  const [selectedSprint, setSelectedSprint] = useState<{ phaseIndex: number; sprintIndex: number } | null>(null)
+  const [selectedFeature, setSelectedFeature] = useState<{ phaseIndex: number; sprintIndex: number; featureIndex: number } | null>(null)
+  const [selectedTicket, setSelectedTicket] = useState<{ phaseIndex: number; sprintIndex: number; featureIndex: number; ticketIndex: number } | null>(null)
+  
+  // Image preview modal state
+  const [previewImage, setPreviewImage] = useState<{ url: string; name: string } | null>(null)
+  
+  // Change requirements modal state
+  const [showChangeRequirementsModal, setShowChangeRequirementsModal] = useState(false)
+  const [newRequirements, setNewRequirements] = useState('')
+  const [newRequirementsFile, setNewRequirementsFile] = useState<File | null>(null)
+  const [extractedNewRequirementsText, setExtractedNewRequirementsText] = useState<string>('')
+  const [isExtractingNewRequirements, setIsExtractingNewRequirements] = useState(false)
+  const [isAnalyzingImpact, setIsAnalyzingImpact] = useState(false)
+  const [impactAnalysis, setImpactAnalysis] = useState<RequirementImpactAnalysis | null>(null)
+  
+  // Ticket editing state
+  const [isEditingTicket, setIsEditingTicket] = useState(false)
+  const [editTicketData, setEditTicketData] = useState<{
+    title: string
+    detailedDescription: string
+    estimatedDays: number
+    acceptanceCriteria: string[]
+    uiReference: string
+    referenceImages: TicketReferenceImage[]
+    status: 'planned' | 'in-progress' | 'completed'
+    assignedTo: {
+      role: string
+      name: string
+    } | null
+    comments: string[]
+  } | null>(null)
+  
+  // Change log state
+  interface ProjectChangeLogEntry {
+    id: string
+    timestamp: string
+    changedBy: string
+    itemType: 'sprint' | 'feature' | 'ticket'
+    itemPath: string // e.g., "Phase 1 > Sprint 2 > Feature A > Ticket 1"
+    changes: string[] // Array of change descriptions
+  }
+  
+  const [changeLog, setChangeLog] = useState<ProjectChangeLogEntry[]>([])
   
   // Define displayProject early for use in handlers
   const displayProject = project || {
@@ -224,6 +272,176 @@ export default function AnalyzeProjectPage() {
     }
   }
 
+  // Mock PDF text extraction (same as create page)
+  const extractTextFromPDF = async (file: File): Promise<string> => {
+    return new Promise((resolve) => {
+      setTimeout(() => {
+        // In a real application, you would use a library like 'pdf-parse'
+        resolve(`Mock PDF content for ${file.name}: This is a detailed project requirement document outlining updated requirements for the project.`)
+      }, 1000)
+    })
+  }
+
+  // Mock DOCX text extraction (same as create page)
+  const extractTextFromDOCX = async (file: File): Promise<string> => {
+    return new Promise((resolve) => {
+      setTimeout(() => {
+        // In a real application, you would use a library like 'mammoth'
+        resolve(`Mock DOCX content for ${file.name}: The attached document specifies updated technical requirements for the project.`)
+      }, 1000)
+    })
+  }
+
+  const handleNewRequirementsFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (file) {
+      const validTypes = [
+        'application/pdf',
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'application/msword'
+      ]
+      const validExtensions = ['.pdf', '.docx', '.doc']
+      const fileExtension = file.name.toLowerCase().substring(file.name.lastIndexOf('.'))
+
+      if (!validTypes.includes(file.type) && !validExtensions.includes(fileExtension)) {
+        setError('Please upload a PDF or DOCX file')
+        return
+      }
+
+      setNewRequirementsFile(file)
+      setError('')
+      setNewRequirements('') // Clear text requirements when file is uploaded
+      setExtractedNewRequirementsText('')
+
+      setIsExtractingNewRequirements(true)
+      try {
+        let text = ''
+        if (file.type === 'application/pdf') {
+          text = await extractTextFromPDF(file)
+        } else if (file.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' || file.type === 'application/msword') {
+          text = await extractTextFromDOCX(file)
+        }
+        setExtractedNewRequirementsText(text)
+        setNewRequirements(text) // Auto-populate textarea
+        setError('')
+      } catch (err) {
+        console.error('Error extracting text:', err)
+        setError('Failed to extract text from document. Please try manual input or another file.')
+        setExtractedNewRequirementsText('')
+        setNewRequirementsFile(null)
+      } finally {
+        setIsExtractingNewRequirements(false)
+      }
+    }
+  }
+
+  const handleRemoveNewRequirementsFile = () => {
+    setNewRequirementsFile(null)
+    setExtractedNewRequirementsText('')
+    const fileInput = document.getElementById('new-requirements-upload') as HTMLInputElement
+    if (fileInput) {
+      fileInput.value = ''
+    }
+  }
+
+  const handleChangeRequirements = async () => {
+    if (!project) return
+
+    const requirementsText = extractedNewRequirementsText.trim() || newRequirements.trim()
+    if (!requirementsText) {
+      setError('Please provide new requirements either as text or upload a document')
+      return
+    }
+
+    setIsAnalyzingImpact(true)
+    setError('')
+
+    try {
+      // Update project requirements
+      const updateResponse = await fetch(`/api/projects/${project.id}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          requirements: requirementsText,
+          requirementsSource: newRequirementsFile ? 'document' : 'manual',
+        }),
+      })
+
+      if (!updateResponse.ok) {
+        throw new Error('Failed to update requirements')
+      }
+
+      const updateData = await updateResponse.json()
+      setProject(updateData.project)
+
+      // Trigger AI requirement impact analysis
+      if (analysis) {
+        const impactResult = await analyzeRequirementImpact({
+          originalRequirements: project.requirements,
+          newRequirements: requirementsText,
+          originalAnalysis: analysis,
+          projectName: project.name,
+          projectDescription: project.description,
+        })
+        
+        setImpactAnalysis(impactResult)
+        
+        // Apply impact to analysis
+        const updatedAnalysis = {
+          ...analysis,
+          timeline: {
+            ...analysis.timeline,
+            estimatedWeeks: analysis.timeline.estimatedWeeks + impactResult.additionalTimeWeeks,
+          },
+          cost: {
+            ...analysis.cost,
+            estimatedTotal: analysis.cost.estimatedTotal + impactResult.additionalCost,
+          },
+        }
+        
+        setAnalysis(updatedAnalysis)
+        
+        // Save updated analysis to project
+        await fetch(`/api/projects/${project.id}`, {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ analysis: updatedAnalysis }),
+        })
+      } else {
+        // If no existing analysis, run full analysis
+        const analysisResult = await analyzeProject({
+          name: project.name,
+          description: project.description,
+          requirements: requirementsText,
+        })
+        
+        setAnalysis(analysisResult.analysis)
+        
+        // Save analysis to project
+        await fetch(`/api/projects/${project.id}`, {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ analysis: analysisResult.analysis }),
+        })
+      }
+      
+      setShowChangeRequirementsModal(false)
+      setNewRequirements('')
+      setNewRequirementsFile(null)
+      setExtractedNewRequirementsText('')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to change requirements and analyze impact')
+    } finally {
+      setIsAnalyzingImpact(false)
+    }
+  }
+
   const toggleSection = (sectionId: string) => {
     const newExpanded = new Set(expandedSections)
     if (newExpanded.has(sectionId)) {
@@ -232,6 +450,198 @@ export default function AnalyzeProjectPage() {
       newExpanded.add(sectionId)
     }
     setExpandedSections(newExpanded)
+  }
+
+  // Ticket editing handlers
+  const startEditTicket = (phaseIndex: number, sprintIndex: number, featureIndex: number, ticketIndex: number) => {
+    if (!executionPlan) return
+    
+    const ticket = executionPlan.phases[phaseIndex].sprints[sprintIndex].features[featureIndex].tickets[ticketIndex]
+    setEditTicketData({
+      title: ticket.title,
+      detailedDescription: ticket.detailedDescription,
+      estimatedDays: ticket.estimatedDays,
+      acceptanceCriteria: [...ticket.acceptanceCriteria],
+      uiReference: ticket.uiReference || '',
+      referenceImages: ticket.referenceImages ? [...ticket.referenceImages] : [],
+      status: ticket.status,
+      assignedTo: ticket.assignedTo ? { ...ticket.assignedTo } : null,
+      comments: ticket.comments ? [...ticket.comments] : [],
+    })
+    setIsEditingTicket(true)
+  }
+
+  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files
+    if (!files || !editTicketData) return
+
+    const imageFiles = Array.from(files).filter(file => {
+      const validTypes = ['image/png', 'image/jpeg', 'image/jpg']
+      const validExtensions = ['.png', '.jpg', '.jpeg']
+      const fileExtension = file.name.toLowerCase().substring(file.name.lastIndexOf('.'))
+      return validTypes.includes(file.type) || validExtensions.includes(fileExtension)
+    })
+
+    if (imageFiles.length === 0) {
+      setError('Please upload PNG or JPG images only')
+      return
+    }
+
+    // Check if adding these images would exceed the limit
+    const currentImageCount = editTicketData.referenceImages.length
+    const remainingSlots = 3 - currentImageCount
+    
+    if (imageFiles.length > remainingSlots) {
+      setError(`Maximum 3 images allowed. You can add ${remainingSlots} more image(s).`)
+      return
+    }
+
+    // Convert images to base64 and add to state
+    const imagePromises = imageFiles.map(file => {
+      return new Promise<TicketReferenceImage>((resolve, reject) => {
+        const reader = new FileReader()
+        reader.onload = (e) => {
+          const previewUrl = e.target?.result as string
+          resolve({
+            name: file.name,
+            previewUrl,
+          })
+        }
+        reader.onerror = () => reject(new Error(`Failed to read ${file.name}`))
+        reader.readAsDataURL(file)
+      })
+    })
+
+    Promise.all(imagePromises)
+      .then(newImages => {
+        setEditTicketData({
+          ...editTicketData,
+          referenceImages: [...editTicketData.referenceImages, ...newImages],
+        })
+        setError('')
+        // Reset file input
+        const fileInput = document.getElementById('ticket-image-upload') as HTMLInputElement
+        if (fileInput) {
+          fileInput.value = ''
+        }
+      })
+      .catch(err => {
+        setError(err instanceof Error ? err.message : 'Failed to process images')
+      })
+  }
+
+  const handleRemoveImage = (index: number) => {
+    if (!editTicketData) return
+    setEditTicketData({
+      ...editTicketData,
+      referenceImages: editTicketData.referenceImages.filter((_, i) => i !== index),
+    })
+  }
+
+  const cancelEditTicket = () => {
+    setIsEditingTicket(false)
+    setEditTicketData(null)
+  }
+
+  const saveEditTicket = () => {
+    if (!executionPlan || !selectedTicket || !editTicketData) return
+
+    // Validation
+    if (!editTicketData.title.trim()) {
+      setError('Title is required')
+      return
+    }
+    if (!editTicketData.detailedDescription.trim()) {
+      setError('Detailed description is required')
+      return
+    }
+    if (editTicketData.estimatedDays < 1 || editTicketData.estimatedDays > 3) {
+      setError('Estimated days must be between 1 and 3')
+      return
+    }
+
+    // Get original ticket for comparison
+    const originalTicket = executionPlan.phases[selectedTicket.phaseIndex].sprints[selectedTicket.sprintIndex].features[selectedTicket.featureIndex].tickets[selectedTicket.ticketIndex]
+    const phase = executionPlan.phases[selectedTicket.phaseIndex]
+    const sprint = executionPlan.phases[selectedTicket.phaseIndex].sprints[selectedTicket.sprintIndex]
+    const feature = executionPlan.phases[selectedTicket.phaseIndex].sprints[selectedTicket.sprintIndex].features[selectedTicket.featureIndex]
+    
+    // Track changes
+    const changes: string[] = []
+    if (originalTicket.title !== editTicketData.title.trim()) {
+      changes.push(`Title: "${originalTicket.title}" → "${editTicketData.title.trim()}"`)
+    }
+    if (originalTicket.detailedDescription !== editTicketData.detailedDescription.trim()) {
+      changes.push('Detailed description updated')
+    }
+    if (originalTicket.estimatedDays !== editTicketData.estimatedDays) {
+      changes.push(`Estimated days: ${originalTicket.estimatedDays} → ${editTicketData.estimatedDays}`)
+    }
+    if (JSON.stringify(originalTicket.acceptanceCriteria) !== JSON.stringify(editTicketData.acceptanceCriteria.filter(c => c.trim().length > 0))) {
+      changes.push('Acceptance criteria updated')
+    }
+    if ((originalTicket.uiReference || '') !== editTicketData.uiReference.trim()) {
+      changes.push(`UI Reference: "${originalTicket.uiReference || 'none'}" → "${editTicketData.uiReference.trim() || 'none'}"`)
+    }
+    if (originalTicket.status !== editTicketData.status) {
+      changes.push(`Status: "${originalTicket.status}" → "${editTicketData.status}"`)
+    }
+    const originalAssignedToStr = originalTicket.assignedTo ? `${originalTicket.assignedTo.role} - ${originalTicket.assignedTo.name}` : 'Unassigned'
+    const editedAssignedToStr = editTicketData.assignedTo ? `${editTicketData.assignedTo.role} - ${editTicketData.assignedTo.name}` : 'Unassigned'
+    if (originalAssignedToStr !== editedAssignedToStr) {
+      changes.push(`Assigned to: "${originalAssignedToStr}" → "${editedAssignedToStr}"`)
+    }
+    if (JSON.stringify(originalTicket.comments || []) !== JSON.stringify(editTicketData.comments.filter(c => c.trim().length > 0))) {
+      changes.push(`Comments updated (${(originalTicket.comments || []).length} → ${editTicketData.comments.filter(c => c.trim().length > 0).length})`)
+    }
+
+    // Update the ticket
+    const updatedPlan = { ...executionPlan }
+    const ticket = updatedPlan.phases[selectedTicket.phaseIndex].sprints[selectedTicket.sprintIndex].features[selectedTicket.featureIndex].tickets[selectedTicket.ticketIndex]
+    
+    ticket.title = editTicketData.title.trim()
+    ticket.detailedDescription = editTicketData.detailedDescription.trim()
+    ticket.estimatedDays = editTicketData.estimatedDays
+    ticket.acceptanceCriteria = editTicketData.acceptanceCriteria.filter(c => c.trim().length > 0)
+    ticket.uiReference = editTicketData.uiReference.trim() || undefined
+    ticket.referenceImages = editTicketData.referenceImages.length > 0 ? editTicketData.referenceImages : undefined
+    ticket.status = editTicketData.status
+    ticket.assignedTo = editTicketData.assignedTo || undefined
+    ticket.comments = editTicketData.comments.filter(c => c.trim().length > 0).length > 0 ? editTicketData.comments.filter(c => c.trim().length > 0) : undefined
+    ticket.lastUpdated = new Date().toISOString()
+    // Add metadata note if reference images are present
+    if (editTicketData.referenceImages.length > 0) {
+      const metadataNote = 'Visual references provided by manager'
+      ticket.metadata = ticket.metadata || []
+      if (!ticket.metadata.includes(metadataNote)) {
+        ticket.metadata.push(metadataNote)
+      }
+    } else {
+      // Remove metadata note if no reference images
+      if (ticket.metadata) {
+        ticket.metadata = ticket.metadata.filter(note => note !== 'Visual references provided by manager')
+        ticket.metadata = ticket.metadata.length > 0 ? ticket.metadata : undefined
+      }
+    }
+
+    // Add change log entry if there are changes
+    if (changes.length > 0) {
+      const itemPath = `${phase.name} > Sprint ${sprint.sprintNumber} > ${feature.name} > ${ticket.title}`
+      const changeLogEntry: ProjectChangeLogEntry = {
+        id: `change-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+        timestamp: new Date().toISOString(),
+        changedBy: 'Manager',
+        itemType: 'ticket',
+        itemPath,
+        changes,
+      }
+      setChangeLog(prev => [changeLogEntry, ...prev])
+    }
+
+    setExecutionPlan(updatedPlan)
+    setIsEditingTicket(false)
+    setEditTicketData(null)
+    setError('')
   }
 
   // Edit handlers
@@ -329,15 +739,20 @@ export default function AnalyzeProjectPage() {
       <div className="container mx-auto px-6 max-w-6xl">
         {/* Header */}
         <div className="mb-6">
-          <Link href="/" className="text-sm text-blue-600 mb-4 inline-block">
-            ← Back to Home
+          <Link href={isSummaryView ? "/projects" : "/"} className="text-sm text-blue-600 mb-4 inline-block">
+            ← Back to {isSummaryView ? "Projects" : "Home"}
           </Link>
           <div className="flex items-start justify-between">
             <div>
               <h1 className="text-3xl font-semibold text-gray-900 mb-1">
-                {displayProject.name}
+                {isSummaryView ? 'Project Summary' : displayProject.name}
               </h1>
-              <p className="text-gray-600">Project Analysis & Planning</p>
+              <p className="text-gray-600">
+                {isSummaryView 
+                  ? 'Overview of project details, timelines, costs, and team composition.'
+                  : 'Project Analysis & Planning'
+                }
+              </p>
             </div>
             {project && (
               <div className="px-3 py-1 bg-gray-100 border border-gray-300 text-xs font-medium text-gray-700">
@@ -371,7 +786,14 @@ export default function AnalyzeProjectPage() {
               <p className="text-sm text-gray-600 mb-3">{displayProject.description}</p>
               {displayProject.requirements && (
                 <div className="pt-3 border-t border-gray-200">
-                  <h4 className="text-xs font-medium text-gray-700 mb-2">Requirements</h4>
+                  <div className="flex justify-between items-center mb-2">
+                    <h4 className="text-xs font-medium text-gray-700">Requirements</h4>
+                    {displayProject.requirementsSource && (
+                      <span className="text-xs text-gray-500">
+                        Source: {displayProject.requirementsSource === 'document' ? 'Uploaded Document' : 'Manual Input'}
+                      </span>
+                    )}
+                  </div>
                   <p className="text-xs text-gray-600 whitespace-pre-wrap line-clamp-4">
                     {displayProject.requirements}
                   </p>
@@ -385,6 +807,14 @@ export default function AnalyzeProjectPage() {
               <h3 className="text-sm font-semibold text-gray-900">Actions</h3>
             </div>
             <div className="p-4 space-y-2">
+              {isSummaryView && project && (
+                <button
+                  onClick={() => setShowChangeRequirementsModal(true)}
+                  className="w-full px-4 py-2 bg-blue-600 text-white text-sm font-medium hover:bg-blue-700"
+                >
+                  Change Requirements
+                </button>
+              )}
               {!analysis && (
                 <button
                   onClick={handleAnalyze}
@@ -394,7 +824,7 @@ export default function AnalyzeProjectPage() {
                   {isAnalyzing ? 'Analyzing...' : 'Analyze Project'}
                 </button>
               )}
-              {analysis && project && (
+              {analysis && project && !isSummaryView && (
                 <>
                   <button
                     onClick={handleApprove}
@@ -460,6 +890,83 @@ export default function AnalyzeProjectPage() {
             </div>
           )}
         </div>
+
+        {/* Impact Summary Section */}
+        {impactAnalysis && (
+          <div className="mb-6">
+            <div className="bg-blue-50 border-2 border-blue-200">
+              <div className="p-4 border-b border-blue-200">
+                <h2 className="text-lg font-semibold text-blue-900">Impact Summary</h2>
+                <p className="text-xs text-blue-700 mt-1">
+                  Analysis of requirement changes impact on project plan
+                </p>
+              </div>
+              <div className="p-6 space-y-6">
+                {/* Summary */}
+                <div>
+                  <h3 className="text-sm font-semibold text-gray-900 mb-2">Summary</h3>
+                  <p className="text-sm text-gray-700">{impactAnalysis.summary}</p>
+                </div>
+
+                {/* New Features */}
+                {impactAnalysis.newFeatures.length > 0 && (
+                  <div>
+                    <h3 className="text-sm font-semibold text-gray-900 mb-3">New Features to be Added</h3>
+                    <ul className="space-y-2">
+                      {impactAnalysis.newFeatures.map((feature, index) => (
+                        <li key={index} className="flex items-start gap-2">
+                          <span className="text-blue-600 mt-1">+</span>
+                          <span className="text-sm text-gray-700">{feature}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {/* Impacted Features */}
+                {impactAnalysis.impactedFeatures.length > 0 && (
+                  <div>
+                    <h3 className="text-sm font-semibold text-gray-900 mb-3">Existing Features Impacted</h3>
+                    <div className="space-y-3">
+                      {impactAnalysis.impactedFeatures.map((item, index) => (
+                        <div key={index} className="border-l-2 border-amber-400 pl-4">
+                          <h4 className="text-sm font-medium text-gray-900 mb-1">{item.feature}</h4>
+                          <p className="text-xs text-gray-600">{item.impactDescription}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Impact Metrics */}
+                <div className="grid md:grid-cols-2 gap-4 pt-4 border-t border-blue-200">
+                  <div className="bg-white border border-gray-200 p-4">
+                    <h4 className="text-xs font-semibold text-gray-900 mb-1">Additional Time Required</h4>
+                    <p className="text-2xl font-semibold text-gray-900">
+                      +{impactAnalysis.additionalTimeWeeks} week{impactAnalysis.additionalTimeWeeks !== 1 ? 's' : ''}
+                    </p>
+                  </div>
+                  <div className="bg-white border border-gray-200 p-4">
+                    <h4 className="text-xs font-semibold text-gray-900 mb-1">Additional Cost</h4>
+                    <p className="text-2xl font-semibold text-gray-900">
+                      {impactAnalysis.costCurrency} +{impactAnalysis.additionalCost.toLocaleString()}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Close Button */}
+                <div className="pt-4 border-t border-blue-200">
+                  <button
+                    onClick={() => setImpactAnalysis(null)}
+                    className="px-4 py-2 bg-blue-600 text-white text-sm font-medium hover:bg-blue-700"
+                  >
+                    Close Impact Summary
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Analysis Sections */}
         {analysis && (
@@ -1163,11 +1670,18 @@ export default function AnalyzeProjectPage() {
                               </button>
                               {expandedSections.has(`sprint-${phaseIndex}-${sprintIndex}`) && (
                                 <div className="p-4 space-y-3">
-                                  {sprint.features.map((feature, featureIndex) => (
-                                    <div key={featureIndex} className="border border-gray-200 bg-white">
+                                  {sprint.features.map((feature, featureIndex) => {
+                                    const isSelected = selectedFeature?.phaseIndex === phaseIndex && selectedFeature?.sprintIndex === sprintIndex && selectedFeature?.featureIndex === featureIndex
+                                    return (
+                                    <div key={featureIndex} className={`border border-gray-200 bg-white ${isSelected ? 'ring-2 ring-green-500' : ''}`}>
                                       <button
-                                        onClick={() => toggleSection(`feature-${phaseIndex}-${sprintIndex}-${featureIndex}`)}
-                                        className="w-full p-3 bg-gray-50 hover:bg-gray-100 text-left flex justify-between items-center"
+                                        onClick={(e) => {
+                                          e.stopPropagation()
+                                          setSelectedFeature({ phaseIndex, sprintIndex, featureIndex })
+                                          setSelectedTicket(null)
+                                          toggleSection(`feature-${phaseIndex}-${sprintIndex}-${featureIndex}`)
+                                        }}
+                                        className={`w-full p-3 text-left flex justify-between items-center ${isSelected ? 'bg-green-50 hover:bg-green-100' : 'bg-gray-50 hover:bg-gray-100'}`}
                                       >
                                         <div>
                                           <h5 className="text-xs font-medium text-gray-900">{feature.name}</h5>
@@ -1180,40 +1694,469 @@ export default function AnalyzeProjectPage() {
                                       {expandedSections.has(`feature-${phaseIndex}-${sprintIndex}-${featureIndex}`) && (
                                         <div className="p-4">
                                           <h6 className="text-xs font-medium text-gray-700 mb-2">Tickets</h6>
-                                          <div className="space-y-2">
-                                            {feature.tickets.map((ticket, ticketIndex) => (
-                                              <div key={ticketIndex} className="border-l-2 border-blue-600 pl-3 py-2">
-                                                <div className="flex justify-between items-start">
-                                                  <div>
-                                                    <p className="text-xs font-medium text-gray-900">{ticket.title}</p>
-                                                    <p className="text-xs text-gray-500 mt-1">{ticket.description}</p>
-                                                  </div>
-                                                  <div className="text-right">
-                                                    <p className="text-xs text-gray-500">
-                                                      Day {ticket.day} - {new Date(ticket.date).toLocaleDateString()}
-                                                    </p>
-                                                    <span className={`text-xs px-2 py-1 mt-1 inline-block ${
-                                                      ticket.status === 'completed' ? 'bg-green-100 text-green-800' :
-                                                      ticket.status === 'in-progress' ? 'bg-blue-100 text-blue-800' :
-                                                      'bg-gray-100 text-gray-800'
-                                                    }`}>
-                                                      {ticket.status}
+                                          <div className="space-y-3">
+                                            {feature.tickets.map((ticket, ticketIndex) => {
+                                              const ticketSectionId = `ticket-${phaseIndex}-${sprintIndex}-${featureIndex}-${ticketIndex}`
+                                              const isExpanded = expandedSections.has(ticketSectionId)
+                                              
+                                              // Calculate end date for multi-day tickets
+                                              const ticketEndDate = new Date(ticket.date)
+                                              if (ticket.estimatedDays > 1) {
+                                                ticketEndDate.setDate(ticketEndDate.getDate() + ticket.estimatedDays - 1)
+                                              }
+                                              
+                                              const isSelected = selectedTicket?.phaseIndex === phaseIndex && selectedTicket?.sprintIndex === sprintIndex && selectedTicket?.featureIndex === featureIndex && selectedTicket?.ticketIndex === ticketIndex
+                                              return (
+                                                <div key={ticketIndex} className={`border border-gray-200 bg-white ${isSelected ? 'ring-2 ring-purple-500' : ''}`}>
+                                                  <button
+                                                    onClick={(e) => {
+                                                      e.stopPropagation()
+                                                      setSelectedTicket({ phaseIndex, sprintIndex, featureIndex, ticketIndex })
+                                                      toggleSection(ticketSectionId)
+                                                    }}
+                                                    className={`w-full p-3 text-left flex justify-between items-start ${isSelected ? 'bg-purple-50 hover:bg-purple-100' : 'bg-gray-50 hover:bg-gray-100'}`}
+                                                  >
+                                                    <div className="flex-1">
+                                                      <div className="flex items-start justify-between">
+                                                        <div className="flex-1">
+                                                          <p className="text-xs font-medium text-gray-900">{ticket.title}</p>
+                                                          <p className="text-xs text-gray-500 mt-1">{ticket.description}</p>
+                                                          {ticket.metadata && ticket.metadata.length > 0 && (
+                                                            <div className="mt-1 flex flex-wrap gap-1">
+                                                              {ticket.metadata.map((note, noteIdx) => (
+                                                                <span key={noteIdx} className="text-xs bg-blue-50 text-blue-700 px-2 py-0.5 border border-blue-200">
+                                                                  {note}
+                                                                </span>
+                                                              ))}
+                                                            </div>
+                                                          )}
+                                                        </div>
+                                                        <div className="text-right ml-4">
+                                                          <p className="text-xs text-gray-500">
+                                                            {ticket.estimatedDays > 1 
+                                                              ? `${new Date(ticket.date).toLocaleDateString()} - ${ticketEndDate.toLocaleDateString()}`
+                                                              : new Date(ticket.date).toLocaleDateString()
+                                                            }
+                                                          </p>
+                                                          <div className="flex items-center gap-2 mt-1">
+                                                            <span className="text-xs text-gray-500">
+                                                              Day {ticket.day}{ticket.estimatedDays > 1 ? `-${ticket.day + ticket.estimatedDays - 1}` : ''}
+                                                            </span>
+                                                            {ticket.estimatedDays > 1 && (
+                                                              <span className="text-xs bg-purple-100 text-purple-800 px-2 py-0.5">
+                                                                {ticket.estimatedDays} days
+                                                              </span>
+                                                            )}
+                                                            <span className={`text-xs px-2 py-1 ${
+                                                              ticket.status === 'completed' ? 'bg-green-100 text-green-800' :
+                                                              ticket.status === 'in-progress' ? 'bg-blue-100 text-blue-800' :
+                                                              'bg-gray-100 text-gray-800'
+                                                            }`}>
+                                                              {ticket.status}
+                                                            </span>
+                                                          </div>
+                                                        </div>
+                                                      </div>
+                                                    </div>
+                                                    <span className="text-xs text-gray-500 ml-2 mt-1">
+                                                      {isExpanded ? '▼' : '▶'}
                                                     </span>
-                                                  </div>
+                                                  </button>
+                                                  {isExpanded && (
+                                                    <div className="p-4 border-t border-gray-200 space-y-3">
+                                                      {isEditingTicket && selectedTicket?.phaseIndex === phaseIndex && selectedTicket?.sprintIndex === sprintIndex && selectedTicket?.featureIndex === featureIndex && selectedTicket?.ticketIndex === ticketIndex && editTicketData ? (
+                                                        <div className="space-y-4">
+                                                          <div>
+                                                            <label className="text-xs font-semibold text-gray-900 mb-1 block">Title *</label>
+                                                            <input
+                                                              type="text"
+                                                              value={editTicketData.title}
+                                                              onChange={(e) => setEditTicketData({ ...editTicketData, title: e.target.value })}
+                                                              className="w-full px-3 py-2 border border-gray-300 text-sm"
+                                                              placeholder="Ticket title"
+                                                            />
+                                                          </div>
+                                                          <div>
+                                                            <label className="text-xs font-semibold text-gray-900 mb-1 block">Detailed Description *</label>
+                                                            <textarea
+                                                              value={editTicketData.detailedDescription}
+                                                              onChange={(e) => setEditTicketData({ ...editTicketData, detailedDescription: e.target.value })}
+                                                              rows={4}
+                                                              className="w-full px-3 py-2 border border-gray-300 text-sm"
+                                                              placeholder="Detailed description"
+                                                            />
+                                                          </div>
+                                                          <div>
+                                                            <label className="text-xs font-semibold text-gray-900 mb-1 block">Estimated Days (1-3) *</label>
+                                                            <input
+                                                              type="number"
+                                                              min="1"
+                                                              max="3"
+                                                              value={editTicketData.estimatedDays}
+                                                              onChange={(e) => setEditTicketData({ ...editTicketData, estimatedDays: parseInt(e.target.value) || 1 })}
+                                                              className="w-full px-3 py-2 border border-gray-300 text-sm"
+                                                            />
+                                                          </div>
+                                                          <div>
+                                                            <label className="text-xs font-semibold text-gray-900 mb-1 block">Acceptance Criteria</label>
+                                                            <div className="space-y-2">
+                                                              {editTicketData.acceptanceCriteria.map((criterion, idx) => (
+                                                                <div key={idx} className="flex gap-2">
+                                                                  <input
+                                                                    type="text"
+                                                                    value={criterion}
+                                                                    onChange={(e) => {
+                                                                      const updated = [...editTicketData.acceptanceCriteria]
+                                                                      updated[idx] = e.target.value
+                                                                      setEditTicketData({ ...editTicketData, acceptanceCriteria: updated })
+                                                                    }}
+                                                                    className="flex-1 px-3 py-2 border border-gray-300 text-sm"
+                                                                    placeholder="Acceptance criterion"
+                                                                  />
+                                                                  <button
+                                                                    onClick={() => {
+                                                                      const updated = editTicketData.acceptanceCriteria.filter((_, i) => i !== idx)
+                                                                      setEditTicketData({ ...editTicketData, acceptanceCriteria: updated })
+                                                                    }}
+                                                                    className="px-3 py-2 border border-red-300 bg-red-50 text-red-700 text-sm hover:bg-red-100"
+                                                                  >
+                                                                    Remove
+                                                                  </button>
+                                                                </div>
+                                                              ))}
+                                                              <button
+                                                                onClick={() => setEditTicketData({ ...editTicketData, acceptanceCriteria: [...editTicketData.acceptanceCriteria, ''] })}
+                                                                className="px-3 py-2 border border-gray-300 bg-white text-gray-700 text-sm hover:bg-gray-50"
+                                                              >
+                                                                Add Criterion
+                                                              </button>
+                                                            </div>
+                                                          </div>
+                                                          <div>
+                                                            <label className="text-xs font-semibold text-gray-900 mb-1 block">UI Reference</label>
+                                                            <input
+                                                              type="text"
+                                                              value={editTicketData.uiReference}
+                                                              onChange={(e) => setEditTicketData({ ...editTicketData, uiReference: e.target.value })}
+                                                              className="w-full px-3 py-2 border border-gray-300 text-sm"
+                                                              placeholder="UI reference URL or placeholder"
+                                                            />
+                                                          </div>
+                                                          <div>
+                                                            <label className="text-xs font-semibold text-gray-900 mb-1 block">Status *</label>
+                                                            <select
+                                                              value={editTicketData.status}
+                                                              onChange={(e) => setEditTicketData({ ...editTicketData, status: e.target.value as 'planned' | 'in-progress' | 'completed' })}
+                                                              className="w-full px-3 py-2 border border-gray-300 text-sm"
+                                                            >
+                                                              <option value="planned">Planned</option>
+                                                              <option value="in-progress">In Progress</option>
+                                                              <option value="completed">Completed</option>
+                                                            </select>
+                                                          </div>
+                                                          <div>
+                                                            <label className="text-xs font-semibold text-gray-900 mb-1 block">Assigned To</label>
+                                                            <div className="space-y-2">
+                                                              <input
+                                                                type="text"
+                                                                value={editTicketData.assignedTo?.role || ''}
+                                                                onChange={(e) => setEditTicketData({ 
+                                                                  ...editTicketData, 
+                                                                  assignedTo: e.target.value ? { 
+                                                                    role: e.target.value, 
+                                                                    name: editTicketData.assignedTo?.name || '' 
+                                                                  } : null 
+                                                                })}
+                                                                className="w-full px-3 py-2 border border-gray-300 text-sm"
+                                                                placeholder="Role (e.g., Developer, QA Engineer)"
+                                                              />
+                                                              <input
+                                                                type="text"
+                                                                value={editTicketData.assignedTo?.name || ''}
+                                                                onChange={(e) => setEditTicketData({ 
+                                                                  ...editTicketData, 
+                                                                  assignedTo: editTicketData.assignedTo ? { 
+                                                                    ...editTicketData.assignedTo, 
+                                                                    name: e.target.value 
+                                                                  } : { role: '', name: e.target.value }
+                                                                })}
+                                                                className="w-full px-3 py-2 border border-gray-300 text-sm"
+                                                                placeholder="Name"
+                                                              />
+                                                              {editTicketData.assignedTo && (
+                                                                <button
+                                                                  type="button"
+                                                                  onClick={() => setEditTicketData({ ...editTicketData, assignedTo: null })}
+                                                                  className="text-xs text-red-600 hover:text-red-800 px-2 py-1"
+                                                                >
+                                                                  Clear Assignment
+                                                                </button>
+                                                              )}
+                                                            </div>
+                                                          </div>
+                                                          <div>
+                                                            <label className="text-xs font-semibold text-gray-900 mb-1 block">Comments</label>
+                                                            <div className="space-y-2">
+                                                              {editTicketData.comments.map((comment, idx) => (
+                                                                <div key={idx} className="flex gap-2">
+                                                                  <textarea
+                                                                    value={comment}
+                                                                    onChange={(e) => {
+                                                                      const updated = [...editTicketData.comments]
+                                                                      updated[idx] = e.target.value
+                                                                      setEditTicketData({ ...editTicketData, comments: updated })
+                                                                    }}
+                                                                    rows={2}
+                                                                    className="flex-1 px-3 py-2 border border-gray-300 text-sm"
+                                                                    placeholder="Comment"
+                                                                  />
+                                                                  <button
+                                                                    type="button"
+                                                                    onClick={() => {
+                                                                      const updated = editTicketData.comments.filter((_, i) => i !== idx)
+                                                                      setEditTicketData({ ...editTicketData, comments: updated })
+                                                                    }}
+                                                                    className="px-3 py-2 border border-red-300 bg-red-50 text-red-700 text-sm hover:bg-red-100"
+                                                                  >
+                                                                    Remove
+                                                                  </button>
+                                                                </div>
+                                                              ))}
+                                                              <button
+                                                                type="button"
+                                                                onClick={() => setEditTicketData({ ...editTicketData, comments: [...editTicketData.comments, ''] })}
+                                                                className="px-3 py-2 border border-gray-300 bg-white text-gray-700 text-sm hover:bg-gray-50"
+                                                              >
+                                                                Add Comment
+                                                              </button>
+                                                            </div>
+                                                          </div>
+                                                          <div>
+                                                            <label className="text-xs font-semibold text-gray-900 mb-1 block">
+                                                              Reference Images ({editTicketData.referenceImages.length}/3)
+                                                            </label>
+                                                            {editTicketData.referenceImages.length < 3 && (
+                                                              <label
+                                                                htmlFor="ticket-image-upload"
+                                                                className="inline-block px-3 py-2 border border-gray-300 bg-white text-xs font-medium text-gray-700 cursor-pointer hover:bg-gray-50 mb-2"
+                                                              >
+                                                                Upload Image (PNG/JPG)
+                                                              </label>
+                                                            )}
+                                                            <input
+                                                              id="ticket-image-upload"
+                                                              type="file"
+                                                              accept=".png,.jpg,.jpeg,image/png,image/jpeg"
+                                                              multiple
+                                                              onChange={handleImageUpload}
+                                                              className="hidden"
+                                                              disabled={editTicketData.referenceImages.length >= 3}
+                                                            />
+                                                            {editTicketData.referenceImages.length > 0 && (
+                                                              <div className="mt-2 space-y-2">
+                                                                {editTicketData.referenceImages.map((image, idx) => (
+                                                                  <div key={idx} className="flex items-center gap-2 p-2 border border-gray-200 bg-gray-50">
+                                                                    <img
+                                                                      src={image.previewUrl}
+                                                                      alt={image.name}
+                                                                      className="w-16 h-16 object-cover border border-gray-300"
+                                                                    />
+                                                                    <div className="flex-1 min-w-0">
+                                                                      <p className="text-xs text-gray-700 truncate">{image.name}</p>
+                                                                    </div>
+                                                                    <button
+                                                                      type="button"
+                                                                      onClick={() => handleRemoveImage(idx)}
+                                                                      className="text-xs text-red-600 hover:text-red-800 px-2 py-1"
+                                                                    >
+                                                                      Remove
+                                                                    </button>
+                                                                  </div>
+                                                                ))}
+                                                              </div>
+                                                            )}
+                                                            {editTicketData.referenceImages.length >= 3 && (
+                                                              <p className="text-xs text-gray-500 mt-1">Maximum 3 images reached</p>
+                                                            )}
+                                                          </div>
+                                                          <div className="flex gap-2 pt-2">
+                                                            <button
+                                                              onClick={saveEditTicket}
+                                                              className="px-4 py-2 bg-blue-600 text-white text-sm font-medium"
+                                                            >
+                                                              Save
+                                                            </button>
+                                                            <button
+                                                              onClick={cancelEditTicket}
+                                                              className="px-4 py-2 border border-gray-300 bg-white text-gray-700 text-sm font-medium"
+                                                            >
+                                                              Cancel
+                                                            </button>
+                                                          </div>
+                                                        </div>
+                                                      ) : (
+                                                        <>
+                                                          <div className="flex justify-between items-start mb-2">
+                                                            <div className="text-xs font-semibold text-gray-900">Details</div>
+                                                            <button
+                                                              onClick={(e) => {
+                                                                e.stopPropagation()
+                                                                setSelectedTicket({ phaseIndex, sprintIndex, featureIndex, ticketIndex })
+                                                                startEditTicket(phaseIndex, sprintIndex, featureIndex, ticketIndex)
+                                                              }}
+                                                              className="text-xs px-3 py-1 border border-gray-300 bg-white text-gray-700 hover:bg-gray-50"
+                                                            >
+                                                              Edit
+                                                            </button>
+                                                          </div>
+                                                          {ticket.detailedDescription && (
+                                                            <div>
+                                                              <div className="text-xs font-semibold text-gray-900 mb-1">Detailed Description</div>
+                                                              <p className="text-xs text-gray-700 whitespace-pre-wrap">{ticket.detailedDescription}</p>
+                                                            </div>
+                                                          )}
+                                                          {ticket.acceptanceCriteria && ticket.acceptanceCriteria.length > 0 && (
+                                                            <div>
+                                                              <div className="text-xs font-semibold text-gray-900 mb-2">Acceptance Criteria</div>
+                                                              <ul className="space-y-1">
+                                                                {ticket.acceptanceCriteria.map((criterion, idx) => (
+                                                                  <li key={idx} className="text-xs text-gray-700 flex items-start">
+                                                                    <span className="text-blue-600 mr-2">•</span>
+                                                                    <span>{criterion}</span>
+                                                                  </li>
+                                                                ))}
+                                                              </ul>
+                                                            </div>
+                                                          )}
+                                                          {ticket.dependencies && ticket.dependencies.length > 0 && (
+                                                            <div>
+                                                              <div className="text-xs font-semibold text-gray-900 mb-1">Dependencies</div>
+                                                              <div className="flex flex-wrap gap-1">
+                                                                {ticket.dependencies.map((dep, idx) => (
+                                                                  <span key={idx} className="text-xs bg-amber-100 text-amber-800 px-2 py-1">
+                                                                    {dep}
+                                                                  </span>
+                                                                ))}
+                                                              </div>
+                                                            </div>
+                                                          )}
+                                                          {ticket.uiReference && (
+                                                            <div>
+                                                              <div className="text-xs font-semibold text-gray-900 mb-1">UI Reference</div>
+                                                              <a 
+                                                                href={ticket.uiReference} 
+                                                                target="_blank" 
+                                                                rel="noopener noreferrer"
+                                                                className="text-xs text-blue-600 hover:underline"
+                                                              >
+                                                                {ticket.uiReference}
+                                                              </a>
+                                                            </div>
+                                                          )}
+                                                          {ticket.referenceImages && ticket.referenceImages.length > 0 && (
+                                                            <div>
+                                                              <div className="text-xs font-semibold text-gray-900 mb-2">Reference Images</div>
+                                                              <div className="grid grid-cols-3 gap-2">
+                                                                {ticket.referenceImages.map((image, idx) => (
+                                                                  <div 
+                                                                    key={idx} 
+                                                                    className="border border-gray-200 cursor-pointer hover:border-blue-400 transition-colors"
+                                                                    onClick={() => setPreviewImage({ url: image.previewUrl, name: image.name })}
+                                                                    role="button"
+                                                                    tabIndex={0}
+                                                                    onKeyDown={(e) => {
+                                                                      if (e.key === 'Enter' || e.key === ' ') {
+                                                                        e.preventDefault()
+                                                                        setPreviewImage({ url: image.previewUrl, name: image.name })
+                                                                      }
+                                                                    }}
+                                                                  >
+                                                                    <img
+                                                                      src={image.previewUrl}
+                                                                      alt={image.name}
+                                                                      className="w-full h-24 object-cover"
+                                                                    />
+                                                                    <p className="text-xs text-gray-600 p-1 truncate" title={image.name}>
+                                                                      {image.name}
+                                                                    </p>
+                                                                  </div>
+                                                                ))}
+                                                              </div>
+                                                            </div>
+                                                          )}
+                                                        </>
+                                                      )}
+                                                    </div>
+                                                  )}
                                                 </div>
-                                              </div>
-                                            ))}
+                                              )
+                                            })}
                                           </div>
                                         </div>
                                       )}
                                     </div>
-                                  ))}
+                                  )
+                                  })}
                                 </div>
                               )}
                             </div>
                           ))}
                         </div>
                       )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Project Change Log Section */}
+        {changeLog.length > 0 && (
+          <div className="mt-6">
+            <div className="bg-white border border-gray-200">
+              <div className="p-4 border-b border-gray-200">
+                <h2 className="text-lg font-semibold text-gray-900">Project Change Log</h2>
+                <p className="text-xs text-gray-600 mt-1">
+                  History of edits made to sprints, features, and tickets
+                </p>
+              </div>
+              <div className="p-6">
+                <div className="space-y-4">
+                  {changeLog.map((entry) => (
+                    <div key={entry.id} className="border border-gray-200 p-4">
+                      <div className="flex justify-between items-start mb-3">
+                        <div className="flex items-center gap-2">
+                          <span className={`text-xs px-2 py-1 ${
+                            entry.itemType === 'sprint' ? 'bg-blue-100 text-blue-800' :
+                            entry.itemType === 'feature' ? 'bg-green-100 text-green-800' :
+                            'bg-purple-100 text-purple-800'
+                          }`}>
+                            {entry.itemType.charAt(0).toUpperCase() + entry.itemType.slice(1)}
+                          </span>
+                          <span className="text-xs text-gray-500">
+                            {new Date(entry.timestamp).toLocaleString()}
+                          </span>
+                          <span className="text-xs text-gray-600">
+                            by {entry.changedBy}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="mb-2">
+                        <span className="text-xs font-semibold text-gray-900">Item:</span>
+                        <span className="text-xs text-gray-700 ml-2">{entry.itemPath}</span>
+                      </div>
+                      <div>
+                        <span className="text-xs font-semibold text-gray-900">Changes:</span>
+                        <ul className="mt-1 space-y-1">
+                          {entry.changes.map((change, idx) => (
+                            <li key={idx} className="text-xs text-gray-700 flex items-start">
+                              <span className="text-gray-400 mr-2">•</span>
+                              <span>{change}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -1276,6 +2219,180 @@ export default function AnalyzeProjectPage() {
           </div>
         )}
       </div>
+      
+      {/* Image Preview Modal */}
+      {previewImage && (
+        <div 
+          className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50"
+          onClick={() => setPreviewImage(null)}
+        >
+          <div 
+            className="relative max-w-4xl max-h-[90vh] p-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              onClick={() => setPreviewImage(null)}
+              className="absolute top-2 right-2 text-white bg-black bg-opacity-50 hover:bg-opacity-75 rounded-full w-8 h-8 flex items-center justify-center text-xl font-bold"
+              aria-label="Close preview"
+            >
+              ×
+            </button>
+            <img
+              src={previewImage.url}
+              alt={previewImage.name}
+              className="max-w-full max-h-[90vh] object-contain rounded"
+            />
+            <div className="mt-2 text-center">
+              <p className="text-white text-sm bg-black bg-opacity-50 px-3 py-1 rounded inline-block">
+                {previewImage.name}
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Change Requirements Modal */}
+      {showChangeRequirementsModal && (
+        <div 
+          className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4"
+          onClick={() => {
+            if (!isAnalyzingImpact && !isExtractingNewRequirements) {
+              setShowChangeRequirementsModal(false)
+              setNewRequirements('')
+              setNewRequirementsFile(null)
+              setExtractedNewRequirementsText('')
+              setError('')
+            }
+          }}
+        >
+          <div 
+            className="relative bg-white max-w-3xl w-full max-h-[90vh] overflow-y-auto p-6"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              onClick={() => {
+                if (!isAnalyzingImpact && !isExtractingNewRequirements) {
+                  setShowChangeRequirementsModal(false)
+                  setNewRequirements('')
+                  setNewRequirementsFile(null)
+                  setExtractedNewRequirementsText('')
+                  setError('')
+                }
+              }}
+              disabled={isAnalyzingImpact || isExtractingNewRequirements}
+              className="absolute top-4 right-4 text-gray-400 hover:text-gray-600 text-2xl font-bold disabled:opacity-50"
+              aria-label="Close modal"
+            >
+              ×
+            </button>
+            
+            <h2 className="text-2xl font-semibold text-gray-900 mb-4">Change Requirements</h2>
+            <p className="text-sm text-gray-600 mb-6">
+              Update project requirements. AI will analyze the impact of these changes.
+            </p>
+
+            <div className="space-y-4">
+              {/* File Upload Option */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Upload Document (PDF/DOCX)
+                </label>
+                <label
+                  htmlFor="new-requirements-upload"
+                  className={`inline-block px-4 py-2 border border-gray-300 bg-white text-sm font-medium text-gray-700 cursor-pointer hover:bg-gray-50 ${isExtractingNewRequirements ? 'opacity-50 cursor-not-allowed' : ''}`}
+                >
+                  {isExtractingNewRequirements ? 'Extracting Text...' : (newRequirementsFile ? 'Change Document' : 'Upload Document (PDF/DOCX)')}
+                </label>
+                <input
+                  id="new-requirements-upload"
+                  type="file"
+                  accept=".pdf,.docx,.doc,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/msword"
+                  onChange={handleNewRequirementsFileChange}
+                  className="hidden"
+                  disabled={isExtractingNewRequirements}
+                />
+                {newRequirementsFile && (
+                  <div className="mt-2 flex items-center gap-2">
+                    <span className="text-sm text-gray-700">
+                      File: <span className="font-medium">{newRequirementsFile.name}</span>
+                      <span className="text-gray-500 ml-2">
+                        ({(newRequirementsFile.size / 1024).toFixed(2)} KB)
+                      </span>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={handleRemoveNewRequirementsFile}
+                      disabled={isExtractingNewRequirements || isAnalyzingImpact}
+                      className="text-xs text-red-600 hover:text-red-800 underline disabled:opacity-50"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                )}
+                {extractedNewRequirementsText && (
+                  <p className="mt-2 text-xs text-green-700">
+                    Text extracted successfully ({extractedNewRequirementsText.length} characters).
+                  </p>
+                )}
+              </div>
+
+              {/* Text Input Option */}
+              <div>
+                <label htmlFor="new-requirements-text" className="block text-sm font-medium text-gray-700 mb-2">
+                  OR Enter Requirements as Text
+                </label>
+                <textarea
+                  id="new-requirements-text"
+                  rows={10}
+                  value={newRequirements}
+                  onChange={(e) => {
+                    setNewRequirements(e.target.value)
+                    if (newRequirementsFile && e.target.value.trim()) {
+                      handleRemoveNewRequirementsFile()
+                    }
+                  }}
+                  className={`w-full px-3 py-2 border border-gray-300 bg-white text-gray-900 text-sm font-mono ${newRequirementsFile ? 'opacity-50 cursor-not-allowed' : ''}`}
+                  placeholder={newRequirementsFile ? 'Document uploaded. Remove document to enter text requirements.' : 'Enter new requirements...'}
+                  disabled={!!newRequirementsFile || isExtractingNewRequirements || isAnalyzingImpact}
+                />
+              </div>
+
+              {/* Error Message */}
+              {error && (
+                <div className="bg-red-50 border border-red-200 p-3">
+                  <p className="text-sm text-red-800">{error}</p>
+                </div>
+              )}
+
+              {/* Action Buttons */}
+              <div className="flex gap-3 pt-4 border-t border-gray-200">
+                <button
+                  onClick={() => {
+                    if (!isAnalyzingImpact && !isExtractingNewRequirements) {
+                      setShowChangeRequirementsModal(false)
+                      setNewRequirements('')
+                      setNewRequirementsFile(null)
+                      setExtractedNewRequirementsText('')
+                      setError('')
+                    }
+                  }}
+                  disabled={isAnalyzingImpact || isExtractingNewRequirements}
+                  className="px-4 py-2 border border-gray-300 bg-white text-gray-700 text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleChangeRequirements}
+                  disabled={isAnalyzingImpact || isExtractingNewRequirements || (!newRequirements.trim() && !extractedNewRequirementsText.trim())}
+                  className="px-4 py-2 bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
+                >
+                  {isAnalyzingImpact ? 'Analyzing Impact...' : 'Update Requirements & Analyze Impact'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

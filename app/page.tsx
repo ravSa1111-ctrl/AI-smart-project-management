@@ -15,7 +15,7 @@ export default function Home() {
         </div>
 
         {/* Main Actions */}
-        <div className="grid md:grid-cols-2 gap-6 mb-8">
+        <div className="grid md:grid-cols-3 gap-6 mb-8">
           <div className="bg-white border border-gray-200 p-6">
             <h2 className="text-xl font-semibold text-gray-900 mb-3">
               Create Project
@@ -31,18 +31,33 @@ export default function Home() {
             </Link>
           </div>
 
+                <div className="bg-white border border-gray-200 p-6">
+                  <h2 className="text-xl font-semibold text-gray-900 mb-3">
+                    View Projects
+                  </h2>
+                  <p className="text-gray-600 mb-4 text-sm">
+                    Overview of all projects. Review and analyze existing projects. Get AI insights on timelines, costs, and team composition.
+                  </p>
+                  <Link
+                    href="/projects"
+                    className="inline-block px-4 py-2 bg-blue-600 text-white text-sm font-medium"
+                  >
+                    View Projects
+                  </Link>
+                </div>
+
           <div className="bg-white border border-gray-200 p-6">
             <h2 className="text-xl font-semibold text-gray-900 mb-3">
-              Analyze Project
+              AI Prompt Log
             </h2>
             <p className="text-gray-600 mb-4 text-sm">
-              Review and analyze existing projects. Get AI insights on timelines, costs, and team composition.
+              Developer panel - Review AI prompts used to build this application (read-only).
             </p>
             <Link
-              href="/projects/analyze"
-              className="inline-block px-4 py-2 bg-blue-600 text-white text-sm font-medium"
+              href="/prompts"
+              className="inline-block px-4 py-2 bg-gray-600 text-white text-sm font-medium"
             >
-              View Projects
+              View Prompt Log
             </Link>
           </div>
         </div>
